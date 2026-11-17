@@ -491,7 +491,7 @@ input[type="range"]{padding:4px 0;accent-color:var(--gold)}
  <div class="logo">MAMUN'S DRIVE</div>
  <div class="subtitle">ULTIMATE 3D EDITION</div>
  <div class="loader"></div>
- <small id="loadingStatus" style="color:#999;letter-spacing:1px">BUILDING CHATTOGRAM HIGHWAY NETWORK...</small>
+ <small id="loadingStatus" style="color:#999;letter-spacing:1px">LOADING 24 GLB ASSETS & CHATTOGRAM ROAD NETWORK...</small>
 </div>
 
 <!-- MAIN MENU -->
@@ -506,7 +506,7 @@ input[type="range"]{padding:4px 0;accent-color:var(--gold)}
     <div class="avatar-circle" id="menuAvatar">M</div>
     <div class="menu-profile-meta">
      <strong id="menuDriverName">MAMUN</strong>
-     <span id="menuVehicleName">HIGH SPEED CAR</span>
+     <span id="menuVehicleName">CUSTOM GLB CAR</span>
     </div>
    </div>
    <div class="menu-coins">
@@ -523,7 +523,7 @@ input[type="range"]{padding:4px 0;accent-color:var(--gold)}
   <button class="menu-btn secondary" id="statsBtn">PLAYER PROFILE</button>
   <div class="small-note">
    CHATTOGRAM • BANGLADESH<br>
-   MURADPUR TO RANGAMATI ROAD • REALISTIC SIMULATOR
+   MURADPUR TO RANGAMATI ROAD • 24 GLB MODEL INTEGRATION
   </div>
  </div>
 </div>
@@ -763,7 +763,6 @@ const CONFIG={
  TRAFFIC_COUNT:28,
  SAVE_KEY:"mamuns_drive_v3_save",
  COLLISION_DISTANCE:3.5,
- PLAYER_GLB_PATH:"./player-car.glb",
  BGM_URL:"./bgm.mp3"
 };
 
@@ -877,7 +876,7 @@ const missions=[
 ];
 
 const trafficTypes=[
- "CNG","CNG","CAR","CAR","BUS","BIKE","RICKSHAW","TRUCK","PICKUP","MICROBUS"
+ "CNG","CAR","BUS","TRUCK","RICKSHAW","MOTORCYCLE","PICKUP"
 ];
 
 const trafficColors=[
@@ -934,7 +933,6 @@ let lastBlinkState=false;
 let cameraShake=0;
 let suspensionPhase=0;
 
-// Active Mission Tracking
 let missionState={
  startDist:0,
  elapsed:0,
@@ -950,7 +948,93 @@ let particles=[];
 let rainPoints=null;
 let toastTimer=null;
 let steeringPointer=null;
-let customCarModel=null;
+
+/* =========================================================
+   CENTRALIZED 24 GLB ASSET MANAGER & CACHE
+   ========================================================= */
+
+const MODEL_PATHS={
+ // Buildings (4)
+ building_01:"./assets/models/buildings/building_01.glb",
+ building_02:"./assets/models/buildings/building_02.glb",
+ shop_01:"./assets/models/buildings/shop_01.glb",
+ market_01:"./assets/models/buildings/market_01.glb",
+ // Nature (4)
+ tree_01:"./assets/models/nature/tree_01.glb",
+ palm_tree:"./assets/models/nature/palm_tree.glb",
+ tree_02:"./assets/models/nature/tree_02.glb",
+ bush_01:"./assets/models/nature/bush_01.glb",
+ // Vehicles (5)
+ bus:"./assets/models/vehicles/bus.glb",
+ truck:"./assets/models/vehicles/truck.glb",
+ car:"./assets/models/vehicles/car.glb",
+ rickshaw:"./assets/models/vehicles/rickshaw.glb",
+ motorcycle:"./assets/models/vehicles/motorcycle.glb",
+ // Objects (11)
+ bus_stop:"./assets/models/objects/bus_stop.glb",
+ bridge:"./assets/models/objects/bridge.glb",
+ electric_pole:"./assets/models/objects/electric_pole.glb",
+ traffic_signal:"./assets/models/objects/traffic_signal.glb",
+ road_divider:"./assets/models/objects/road_divider.glb",
+ barrier:"./assets/models/objects/barrier.glb",
+ billboard:"./assets/models/objects/billboard.glb",
+ bench:"./assets/models/objects/bench.glb",
+ garbage_bin:"./assets/models/objects/garbage_bin.glb",
+ road_sign:"./assets/models/objects/road_sign.glb",
+ drain_cover:"./assets/models/objects/drain_cover.glb",
+ // Player car
+ player_car:"./player-car.glb"
+};
+
+const glbCache=new Map();
+const gltfLoader=new GLTFLoader();
+
+async function preloadAllModels(){
+ const keys=Object.keys(MODEL_PATHS);
+ let loadedCount=0;
+
+ for(const key of keys){
+  const path=MODEL_PATHS[key];
+  try{
+   const gltf=await new Promise((resolve,reject)=>{
+    gltfLoader.load(path,res=>resolve(res),undefined,err=>reject(err));
+   });
+
+   // Process and normalize model hierarchy
+   const model=gltf.scene;
+   model.traverse(child=>{
+    if(child.isMesh){
+     child.castShadow=true;
+     child.receiveShadow=true;
+    }
+   });
+
+   glbCache.set(key,model);
+  }catch(e){
+   console.warn(`GLB Model missing or failed to load: ${path}`,e);
+   glbCache.set(key,null);
+  }
+  loadedCount++;
+  const pct=Math.round((loadedCount/keys.length)*100);
+  $("loadingStatus").textContent=`LOADING 3D ASSETS: ${pct}% (${loadedCount}/${keys.length})`;
+ }
+}
+
+function getClonedModel(key,targetScale=1){
+ const template=glbCache.get(key);
+ if(!template)return null;
+ const clone=template.clone(true);
+ const box=new THREE.Box3().setFromObject(clone);
+ const size=new THREE.Vector3();
+ const center=new THREE.Vector3();
+ box.getSize(size);
+ box.getCenter(center);
+
+ const maxDim=Math.max(size.x,size.y,size.z)||1;
+ const scale=(targetScale/maxDim);
+ clone.scale.setScalar(scale);
+ return clone;
+}
 
 /* =========================================================
    AVATAR HELPER WITH GRACEFUL FALLBACK
@@ -1107,13 +1191,11 @@ function createRoadTexture(){
  ctx.fillStyle="#26282b";
  ctx.fillRect(0,0,512,512);
 
- // Subtle tire wear tracks
  ctx.fillStyle="rgba(16,17,19,0.32)";
  ctx.fillRect(75,0,70,512);
  ctx.fillRect(205,0,70,512);
  ctx.fillRect(365,0,70,512);
 
- // Asphalt aggregate grain
  for(let i=0;i<22000;i++){
   const v=22+Math.random()*38;
   ctx.fillStyle=`rgba(${v},${v},${v},.18)`;
@@ -1137,7 +1219,6 @@ function createBuildingTexture(baseHex,accentHex){
  ctx.fillStyle=baseHex;
  ctx.fillRect(0,0,256,256);
 
- // Concrete weathered plaster lines
  ctx.fillStyle="rgba(0,0,0,0.08)";
  for(let y=0;y<256;y+=32){
   ctx.fillRect(0,y,256,2);
@@ -1291,51 +1372,6 @@ let driver=new THREE.Group();
 let driverSkin=material(characters[0].skin);
 let driverShirt=material(characters[0].shirt);
 
-const gltfLoader=new GLTFLoader();
-
-function loadCustomGLB(){
- return new Promise(resolve=>{
-  gltfLoader.load(
-   CONFIG.PLAYER_GLB_PATH,
-   gltf=>{
-    const model=gltf.scene;
-    const box=new THREE.Box3().setFromObject(model);
-    const size=new THREE.Vector3();
-    const center=new THREE.Vector3();
-    box.getSize(size);
-    box.getCenter(center);
-
-    const maxDim=Math.max(size.x,size.y,size.z)||1;
-    const scale=4.8/maxDim;
-    model.scale.setScalar(scale);
-
-    box.setFromObject(model);
-    box.getCenter(center);
-    model.position.set(-center.x,-box.min.y,-center.z);
-
-    if(size.x>size.z){
-     model.rotation.y=Math.PI/2;
-    }
-
-    model.traverse(child=>{
-     if(child.isMesh){
-      child.castShadow=true;
-      child.receiveShadow=true;
-     }
-    });
-
-    customCarModel=model;
-    resolve(true);
-   },
-   undefined,
-   err=>{
-    console.warn("player-car.glb not found, using procedural 3D vehicle:",err);
-    resolve(false);
-   }
-  );
- });
-}
-
 function makeWheel(x,z,r=.42){
  const pivot=new THREE.Group();
  pivot.position.set(x,r,z);
@@ -1442,23 +1478,24 @@ function buildPlayerVehicle(){
  const v=vehicles[selectedVehicle];
  setupVehicleLights();
 
- if(v.type==="glb"&&customCarModel){
-  const clone=customCarModel.clone();
-  clone.traverse(child=>{
-   if(child.isMesh){
-    const n=child.name.toLowerCase();
-    if(n.includes("wheel")||n.includes("tire")){
-     wheelMeshes.push(child);
+ if(v.type==="glb"){
+  const glbCar=getClonedModel("player_car",4.8);
+  if(glbCar){
+   glbCar.traverse(child=>{
+    if(child.isMesh){
+     const n=child.name.toLowerCase();
+     if(n.includes("wheel")||n.includes("tire")){
+      wheelMeshes.push(child);
+     }
     }
+   });
+   for(const x of [-.72,.72]){
+    const tail=addBox(vehicleBody,.38,.14,.06,M.darkRed,x,.88,2.35);
+    brakeLamps.push(tail);
    }
-  });
-  // Add subtle brake lamp overlays at rear so braking feedback always shows
-  for(const x of [-.72,.72]){
-   const tail=addBox(vehicleBody,.38,.14,.06,M.darkRed,x,.88,2.35);
-   brakeLamps.push(tail);
+   vehicleBody.add(glbCar);
+   return;
   }
-  vehicleBody.add(clone);
-  return;
  }
 
  const fallbackV=v.type==="glb"?vehicles[1]:v;
@@ -1483,7 +1520,6 @@ function buildPlayerVehicle(){
  if(fallbackV.type==="truck"){
   addBox(cabin,width*.85,.78,1.55,M.glass,0,1.67,-.55);
   addBox(cabin,width*.88,.14,1.45,carPaint,0,2.08,-.52);
-  // Pickup cargo bed walls
   addBox(vehicleBody,width*.95,.48,.12,carPaint,0,1.42,2.45);
   for(const side of [-1,1]){
    addBox(vehicleBody,.12,.48,2.35,carPaint,side*(width*.44),1.42,1.3);
@@ -1563,43 +1599,8 @@ function changeVehicle(index){
 }
 
 /* =========================================================
-   TREES, SHOP SIGNBOARDS & BUILDINGS
+   BUILDING, NATURE & ROADSIDE OBJECT PLACEMENT (GLB INTEGRATED)
    ========================================================= */
-
-function createTree(parent,x,z,seed){
- const group=new THREE.Group();
- addCylinder(group,.24,3.1,M.trunk,0,1.55,0);
-
- const size=2.2+seeded(seed)*.85;
- const foliageMat=seeded(seed+3)>.5?M.tree:M.treeLight;
-
- addSphere(group,size,size*1.12,size,foliageMat,0,4.1,0);
- addSphere(group,size*.75,size*.82,size*.75,M.tree,.85,4.7,.15);
- addSphere(group,size*.68,size*.75,size*.68,M.treeLight,-.75,4.5,-.2);
-
- group.position.set(x,0,z);
- parent.add(group);
-}
-
-function createPalm(parent,x,z,seed){
- const group=new THREE.Group();
- const trunk=addCylinder(group,.21,6.0,M.trunk,0,3.0,0);
- trunk.rotation.z=(seeded(seed)-.5)*.08;
-
- for(let i=0;i<8;i++){
-  const angle=i*Math.PI*2/8;
-  const leaf=addBox(
-   group,.22,.08,3.6,M.tree,
-   Math.sin(angle)*1.4,5.9,
-   Math.cos(angle)*1.4
-  );
-  leaf.rotation.y=angle;
-  leaf.rotation.x=-.24;
- }
-
- group.position.set(x,0,z);
- parent.add(group);
-}
 
 function createShopBanner(parent,width,depth,seed){
  const label=shopSigns[Math.floor(seeded(seed)*shopSigns.length)];
@@ -1633,7 +1634,17 @@ function createShopBanner(parent,width,depth,seed){
 
 function createBuilding(parent,x,z,index,area){
  const r=seeded(index*19+Math.round(z));
+ const glbType=(r>.75)?"market_01":((r>.5)?"shop_01":((r>.25)?"building_02":"building_01"));
+ const glbModel=getClonedModel(glbType,14);
 
+ if(glbModel){
+  glbModel.position.set(x,0,z);
+  glbModel.rotation.y=x<0?Math.PI/2:-Math.PI/2;
+  parent.add(glbModel);
+  return;
+ }
+
+ // Procedural fallback building
  let height=11+r*26;
  let width=8.5+r*7.5;
  let depth=9.5+seeded(index*7+z)*7;
@@ -1645,7 +1656,6 @@ function createBuilding(parent,x,z,index,area){
  const mat=materials[Math.floor(r*3)];
 
  const building=new THREE.Group();
-
  addBox(building,width,height,depth,mat,0,height/2,0);
  addBox(building,width+.2,.24,depth+.2,M.sidewalk,0,height+.12,0);
 
@@ -1656,37 +1666,66 @@ function createBuilding(parent,x,z,index,area){
   for(let col=0;col<columns;col++){
    const wx=-width/2+1.25+col*(width-2.5)/(columns-1);
    const wy=1.8+floor*2.8;
-
    const isNightLit=(timeOfDay==="night"||timeOfDay==="evening")&&seeded(index+floor*3+col)>.44;
-   const windowMat=isNightLit?M.windowLight:M.glass;
-
-   addBox(building,1.05,1.25,.07,windowMat,wx,wy,depth/2+.05);
-   addBox(building,1.14,.05,.08,chrome,wx,wy-.64,depth/2+.08);
+   addBox(building,1.05,1.25,.07,isNightLit?M.windowLight:M.glass,wx,wy,depth/2+.05);
   }
  }
 
- if(height>15){
-  for(let floor=1;floor<floors;floor+=2){
-   addBox(building,width*.92,.09,.55,M.sidewalk,0,floor*2.8,depth/2+.26);
-  }
- }
-
- if(area.style==="market"||area.style==="commercial"||area.style==="urban"){
-  addBox(building,width*.86,1.8,.09,M.black,0,1.15,depth/2+.12);
-  addBox(building,width*.9,.18,.32,M.gold,0,2.15,depth/2+.15);
-  if(seeded(index+11)>.35){
-   createShopBanner(building,width,depth,index+31);
-  }
- }
-
- if(height>19&&seeded(index)>.45){
-  addBox(building,1.7,1.5,1.7,M.white,0,height+.95,0);
- }
-
- // Rotate building so its front facade faces the road cleanly
  building.rotation.y=x<0?Math.PI/2:-Math.PI/2;
  building.position.set(x,0,z);
  parent.add(building);
+}
+
+function createTree(parent,x,z,seed){
+ const r=seeded(seed);
+ const glbKey=(r>.66)?"tree_01":((r>.33)?"tree_02":"palm_tree");
+ const glbTree=getClonedModel(glbKey,5.5);
+
+ if(glbTree){
+  glbTree.position.set(x,0,z);
+  parent.add(glbTree);
+  return;
+ }
+
+ const group=new THREE.Group();
+ addCylinder(group,.24,3.1,M.trunk,0,1.55,0);
+ addSphere(group,2.4,2.6,2.4,M.tree,0,4.1,0);
+ group.position.set(x,0,z);
+ parent.add(group);
+}
+
+function createRoadsideObjects(parent,chunkIndex){
+ // Place electric poles, billboards, benches, garbage bins along chunks
+ for(let i=0;i<3;i++){
+  const z=-CONFIG.CHUNK_LENGTH/2+35+i*65;
+  for(const side of [-1,1]){
+   const x=side*(CONFIG.ROAD_WIDTH/2+2.2);
+
+   // Electric Pole
+   const pole=getClonedModel("electric_pole",6.0);
+   if(pole){
+    pole.position.set(x,0,z);
+    parent.add(pole);
+   }
+
+   // Billboard or Bus Stop
+   if(i===1){
+    const stop=getClonedModel("bus_stop",4.0);
+    if(stop){
+     stop.position.set(x+side*0.5,0,z+15);
+     stop.rotation.y=side>0?-Math.PI/2:Math.PI/2;
+     parent.add(stop);
+    }
+   }else if(i===2){
+    const board=getClonedModel("billboard",5.0);
+    if(board){
+     board.position.set(x+side*0.4,0,z-10);
+     board.rotation.y=side>0?Math.PI:-Math.PI;
+     parent.add(board);
+    }
+   }
+  }
+ }
 }
 
 /* =========================================================
@@ -1706,12 +1745,10 @@ function createSign(loc,parent,worldMeters,chunkCenter){
  const canvas=document.createElement("canvas");
  canvas.width=1280;
  canvas.height=320;
-
  const ctx=canvas.getContext("2d");
 
  ctx.fillStyle="#10472d";
  ctx.fillRect(0,0,1280,320);
-
  ctx.strokeStyle="#e5c15d";
  ctx.lineWidth=14;
  ctx.strokeRect(10,10,1260,300);
@@ -1733,7 +1770,6 @@ function createSign(loc,parent,worldMeters,chunkCenter){
   new THREE.PlaneGeometry(13.2,2.75),
   new THREE.MeshBasicMaterial({map:texture})
  );
-
  face.position.set(0,7.4,.2);
  group.add(face);
 
@@ -1755,15 +1791,14 @@ function createIntersection(parent,z){
  }
 
  for(const x of [-11.5,11.5]){
-  addBox(parent,.18,4.6,.18,M.black,x,2.3,z);
-  addBox(parent,.65,1.65,.52,M.black,x,4.9,z);
-
-  const signal=new THREE.Mesh(
-   new THREE.SphereGeometry(.16,10,10),
-   M.amber
-  );
-  signal.position.set(x,5.2,z+.32);
-  parent.add(signal);
+  const signalModel=getClonedModel("traffic_signal",4.5);
+  if(signalModel){
+   signalModel.position.set(x,0,z);
+   parent.add(signalModel);
+  }else{
+   addBox(parent,.18,4.6,.18,M.black,x,2.3,z);
+   addBox(parent,.65,1.65,.52,M.black,x,4.9,z);
+  }
  }
 }
 
@@ -1789,32 +1824,26 @@ function createRoadChunk(index){
 
  /* Sidewalks, Drains & Green Verges */
  for(const side of [-1,1]){
-  // Roadside drainage channel
   addBox(
    group,.55,.2,CONFIG.CHUNK_LENGTH,
    M.drain,side*(CONFIG.ROAD_WIDTH/2+.28),-.11,0
   );
-
-  // Pedestrian footpath
   addBox(
    group,2.4,.32,CONFIG.CHUNK_LENGTH,
    M.sidewalk,side*(CONFIG.ROAD_WIDTH/2+1.75),-.05,0
   );
-
-  // Outer ground terrain
   addBox(
    group,26,.12,CONFIG.CHUNK_LENGTH,
    M.grass,side*(CONFIG.ROAD_WIDTH/2+15.5),-.22,0
   );
 
-  // Roadside buildings & trees placed safely behind footpath (x >= 18.5)
   for(let i=0;i<6;i++){
    const z=-CONFIG.CHUNK_LENGTH/2+18+i*35;
    const buildingX=side*(CONFIG.ROAD_WIDTH/2+9.5+seeded(index*5+i)*4.5);
 
    if(area.style==="green"){
-    if(i%2===0)createPalm(group,side*(CONFIG.ROAD_WIDTH/2+4.2),z,index*40+i);
-    else createTree(group,side*(CONFIG.ROAD_WIDTH/2+4.5),z,index*40+i);
+    if(i%2===0)createTree(group,side*(CONFIG.ROAD_WIDTH/2+4.2),z,index*40+i);
+    else createTree(group,side*(CONFIG.ROAD_WIDTH/2+4.5),z,index*40+i+1);
     if(i%3===0)createBuilding(group,buildingX+side*3,z,index*40+i,area);
    }else if(i%3===0){
     createTree(group,side*(CONFIG.ROAD_WIDTH/2+3.6),z,index*40+i);
@@ -1824,7 +1853,7 @@ function createRoadChunk(index){
   }
  }
 
- /* Center Divider or Double Yellow Line */
+ /* Center Divider */
  if(area.divider){
   const segCount=11;
   const segLen=CONFIG.CHUNK_LENGTH/segCount;
@@ -1832,13 +1861,19 @@ function createRoadChunk(index){
    const segZ=-CONFIG.CHUNK_LENGTH/2+segLen/2+i*segLen;
    if(hasIntersection&&Math.abs(segZ)<16)continue;
 
-   addBox(
-    group,.68,.38,segLen-.15,
-    i%2===0?M.divider:M.dividerStripe,
-    0,.18,segZ
-   );
+   const divModel=getClonedModel("road_divider",4.0);
+   if(divModel){
+    divModel.position.set(0,0,segZ);
+    group.add(divModel);
+   }else{
+    addBox(
+     group,.68,.38,segLen-.15,
+     i%2===0?M.divider:M.dividerStripe,
+     0,.18,segZ
+    );
+   }
    if(i%3===1){
-    createPalm(group,0,segZ,index*17+i);
+    createTree(group,0,segZ,index*17+i);
    }
   }
  }else{
@@ -1857,24 +1892,7 @@ function createRoadChunk(index){
   }
  }
 
- /* Road edge markings */
- for(const side of [-1,1]){
-  addBox(
-   group,.16,.03,CONFIG.CHUNK_LENGTH,
-   M.line,side*(CONFIG.ROAD_WIDTH/2-.45),.02,0
-  );
- }
-
- /* Streetlights */
- for(let i=0;i<4;i++){
-  const z=-CONFIG.CHUNK_LENGTH/2+26+i*52;
-  for(const side of [-1,1]){
-   const lx=side*(CONFIG.ROAD_WIDTH/2+1.2);
-   addBox(group,.18,5.6,.18,M.black,lx,2.8,z);
-   addBox(group,1.8,.12,.12,M.black,lx-side*.75,5.6,z);
-   addBox(group,.48,.16,.28,M.lamp,lx-side*1.35,5.5,z);
-  }
- }
+ createRoadsideObjects(group,index);
 
  if(hasIntersection){
   createIntersection(group,0);
@@ -1913,74 +1931,48 @@ function updateWorld(){
 }
 
 /* =========================================================
-   ADVANCED BANGLADESH TRAFFIC AI SYSTEM
+   ADVANCED BANGLADESH TRAFFIC AI SYSTEM (GLB INTEGRATED)
    ========================================================= */
 
 function createTrafficVehicle(type,x,z,direction=1){
  const group=new THREE.Group();
 
- let w=1.9,h=.85,l=3.9;
- let color=trafficColors[Math.floor(Math.random()*trafficColors.length)];
+ let modelKey="car";
+ let fallbackW=1.9,fallbackH=.85,fallbackL=3.9;
 
- if(type==="CNG"){
-  w=1.45;h=1.55;l=2.65;color=0x1f7a48;
- }else if(type==="BUS"){
-  w=2.55;h=3.2;l=8.4;color=0xd4ad32;
- }else if(type==="BIKE"){
-  w=.78;h=.92;l=2.05;color=0x1c1c1c;
- }else if(type==="RICKSHAW"){
-  w=1.42;h=1.65;l=2.55;color=0x17693d;
+ if(type==="BUS"){
+  modelKey="bus";
+  fallbackW=2.55;fallbackH=3.2;fallbackL=8.4;
  }else if(type==="TRUCK"){
-  w=2.55;h=2.75;l=7.2;color=0x5d6963;
+  modelKey="truck";
+  fallbackW=2.55;fallbackH=2.75;fallbackL=7.2;
+ }else if(type==="CAR"){
+  modelKey="car";
+  fallbackW=1.9;fallbackH=.85;fallbackL=3.9;
+ }else if(type==="RICKSHAW"){
+  modelKey="rickshaw";
+  fallbackW=1.42;fallbackH=1.65;fallbackL=2.55;
+ }else if(type==="MOTORCYCLE"||type==="BIKE"){
+  modelKey="motorcycle";
+  fallbackW=.78;fallbackH=.92;fallbackL=2.05;
  }else if(type==="PICKUP"){
-  w=2.0;h=1.1;l=4.4;color=0x2d4b6e;
- }else if(type==="MICROBUS"){
-  w=2.05;h=1.85;l=4.75;color=0xd8d8d8;
+  modelKey="truck";
+  fallbackW=2.0;fallbackH=1.1;fallbackL=4.4;
+ }else if(type==="CNG"){
+  // Fallback procedural CNG since no cng.glb exists
+  modelKey=null;
+  fallbackW=1.45;fallbackH=1.55;fallbackL=2.65;
  }
 
- const paint=material(color,.48,.16);
- addBox(group,w,h,l,paint,0,h/2,0);
+ const glbMesh=modelKey?getClonedModel(modelKey,4.5):null;
+ let w=fallbackW,h=fallbackH,l=fallbackL;
 
- if(type==="CAR"){
+ if(glbMesh){
+  group.add(glbMesh);
+ }else{
+  const paint=material(trafficColors[Math.floor(Math.random()*trafficColors.length)],.48,.16);
+  addBox(group,w,h,l,paint,0,h/2,0);
   addBox(group,w*.82,.75,l*.55,M.glass,0,h+.3,0);
- }else if(type==="MICROBUS"){
-  addBox(group,w*.88,.65,l*.78,M.glass,0,h+.12,0);
- }else if(type==="CNG"||type==="RICKSHAW"){
-  addBox(group,w*.84,.78,l*.66,M.black,0,h+.25,0);
-  addBox(group,w*.82,.46,.08,M.glass,0,.9,-l/2-.02);
- }else if(type==="BUS"){
-  addBox(group,w*.86,1.0,l*.82,M.glass,0,h+.06,0);
-  for(let i=0;i<5;i++){
-   addBox(group,.05,.85,.08,M.black,-w*.4+i*w*.2,h+.1,-l*.45);
-  }
- }else if(type==="TRUCK"||type==="PICKUP"){
-  addBox(group,w*.92,type==="TRUCK"?1.55:.85,l*.58,M.building3,0,h+(type==="TRUCK"?1.05:.55),type==="TRUCK"?0:.5);
- }else if(type==="BIKE"){
-  addSphere(group,.26,.45,.26,M.black,0,1.25,0);
- }
-
- const radius=(type==="BUS"||type==="TRUCK")?.54:.35;
- const wheelCount=(type==="BUS"||type==="TRUCK")?6:4;
-
- for(let i=0;i<wheelCount;i++){
-  const wheel=new THREE.Mesh(
-   new THREE.CylinderGeometry(radius,radius,.18,12),
-   rubber
-  );
-  wheel.rotation.z=Math.PI/2;
-  wheel.position.set(
-   (i%2===0?-1:1)*w*.52,
-   radius,
-   wheelCount===6?
-    -l*.35+Math.floor(i/2)*l*.35:
-    (i<2?-1:1)*l*.32
-  );
-  group.add(wheel);
- }
-
- for(const side of [-1,1]){
-  addBox(group,.24,.18,.08,M.red,side*w*.35,h*.65,l/2+.04);
-  addBox(group,.24,.18,.08,M.white,side*w*.35,h*.65,-l/2-.04);
  }
 
  group.rotation.y=direction===1?0:Math.PI;
@@ -1992,7 +1984,7 @@ function createTrafficVehicle(type,x,z,direction=1){
   type==="BUS"?6.5+Math.random()*5.5:
   type==="TRUCK"?6.0+Math.random()*5.0:
   type==="CNG"?8.5+Math.random()*6.5:
-  type==="BIKE"?14.0+Math.random()*9.0:
+  type==="MOTORCYCLE"?14.0+Math.random()*9.0:
   10.0+Math.random()*12.0;
 
  return{
@@ -2121,7 +2113,7 @@ function updateTraffic(dt){
 }
 
 /* =========================================================
-   ADVANCED COLLISION, PARTICLE SPARKS & IMPACT FEEDBACK
+   COLLISION, PARTICLE SPARKS & IMPACT FEEDBACK
    ========================================================= */
 
 function spawnImpactParticles(x,z,count=18,isSpark=true){
@@ -2327,7 +2319,7 @@ function updateRain(dt){
 }
 
 /* =========================================================
-   CAMERA SYSTEM WITH IMPACT SHAKE & SPEED FOV
+   CAMERA SYSTEM
    ========================================================= */
 
 const cameraTarget=new THREE.Vector3();
@@ -2362,7 +2354,7 @@ function updateCamera(dt){
 }
 
 /* =========================================================
-   REALISTIC AUDIO SYSTEM (ENGINE, RAIN, HORN, CRASH, BGM)
+   AUDIO SYSTEM (ENGINE, HORN, CRASH, BGM)
    ========================================================= */
 
 let audioContext=null;
@@ -2581,7 +2573,7 @@ function playTickSound(high=true){
 }
 
 /* =========================================================
-   REALISTIC VEHICLE PHYSICS
+   VEHICLE PHYSICS
    ========================================================= */
 
 function updatePlayer(dt){
@@ -3058,7 +3050,7 @@ function restartGame(){
 }
 
 /* =========================================================
-   CHARACTER, VEHICLE & MISSION UI RENDERERS
+   UI RENDERERS
    ========================================================= */
 
 function renderCharacters(){
@@ -3079,7 +3071,7 @@ function renderCharacters(){
 
   const roleEl=document.createElement("div");
   roleEl.className="char-card-sub";
-  roleEl.textContent=`${c.gender} • ${c.role}`;
+  roleEl.textContent=c.role;
 
   card.appendChild(avatar);
   card.appendChild(nameEl);
@@ -3642,8 +3634,8 @@ async function initializeGame(){
  $("timeSelect").value=timeOfDay;
  $("qualitySelect").value=graphicsQuality;
 
- $("loadingStatus").textContent="LOADING VEHICLE MODELS...";
- await loadCustomGLB();
+ $("loadingStatus").textContent="PRELOADING 24 GLB ASSETS...";
+ await preloadAllModels();
 
  buildPlayerVehicle();
  updateCharacter();
