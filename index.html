@@ -972,6 +972,8 @@ let toastTimer=null;
 let steeringPointer=null;
 let customCarModel=null;
 let headlightCones=[];
+let headlightBulbs=[];
+let streetLightPools=[];
 let rainSplashDrops=[];
 
 /* =========================================================
@@ -1129,13 +1131,11 @@ function createRoadTexture(){
  ctx.fillStyle="#26282b";
  ctx.fillRect(0,0,512,512);
 
- // Subtle tire wear tracks
  ctx.fillStyle="rgba(16,17,19,0.32)";
  ctx.fillRect(75,0,70,512);
  ctx.fillRect(205,0,70,512);
  ctx.fillRect(365,0,70,512);
 
- // Asphalt aggregate grain
  for(let i=0;i<22000;i++){
   const v=22+Math.random()*38;
   ctx.fillStyle=`rgba(${v},${v},${v},.18)`;
@@ -1173,10 +1173,52 @@ function createBuildingTexture(baseHex,accentHex){
  return tex;
 }
 
+function createHeadlightBeamTexture(){
+ const canvas=document.createElement("canvas");
+ canvas.width=128;
+ canvas.height=256;
+ const ctx=canvas.getContext("2d");
+
+ const gradY=ctx.createLinearGradient(0,256,0,0);
+ gradY.addColorStop(0,"rgba(255,252,235,0.88)");
+ gradY.addColorStop(0.28,"rgba(255,248,215,0.45)");
+ gradY.addColorStop(0.68,"rgba(255,244,195,0.14)");
+ gradY.addColorStop(1,"rgba(255,240,180,0.0)");
+
+ ctx.fillStyle=gradY;
+ ctx.fillRect(0,0,128,256);
+
+ const tex=new THREE.CanvasTexture(canvas);
+ tex.colorSpace=THREE.SRGBColorSpace;
+ return tex;
+}
+
+function createLightPoolTexture(){
+ const canvas=document.createElement("canvas");
+ canvas.width=128;
+ canvas.height=128;
+ const ctx=canvas.getContext("2d");
+
+ const grad=ctx.createRadialGradient(64,64,4,64,64,62);
+ grad.addColorStop(0,"rgba(255,222,140,0.68)");
+ grad.addColorStop(0.42,"rgba(255,205,110,0.28)");
+ grad.addColorStop(0.75,"rgba(255,190,90,0.08)");
+ grad.addColorStop(1,"rgba(255,180,80,0.0)");
+
+ ctx.fillStyle=grad;
+ ctx.fillRect(0,0,128,128);
+
+ const tex=new THREE.CanvasTexture(canvas);
+ tex.colorSpace=THREE.SRGBColorSpace;
+ return tex;
+}
+
 const roadTexture=createRoadTexture();
 const bTex1=createBuildingTexture("#94897a","#6e6355");
 const bTex2=createBuildingTexture("#a89b85","#7a6f5d");
 const bTex3=createBuildingTexture("#72797c","#4f5558");
+const beamTexture=createHeadlightBeamTexture();
+const lightPoolTexture=createLightPoolTexture();
 
 function material(color,roughness=.8,metalness=0,map=null){
  const opts={color,roughness,metalness};
@@ -1202,10 +1244,22 @@ const M={
  building1:material(0xffffff,.85,0,bTex1),
  building2:material(0xffffff,.85,0,bTex2),
  building3:material(0xffffff,.85,0,bTex3),
- red:new THREE.MeshBasicMaterial({color:0xff1a1a}),
- darkRed:new THREE.MeshBasicMaterial({color:0x550808}),
+ red:new THREE.MeshBasicMaterial({color:0xff2222}),
+ darkRed:new THREE.MeshBasicMaterial({color:0x660a0a}),
+ trafficTail:new THREE.MeshBasicMaterial({color:0xff1e1e}),
+ trafficHead:new THREE.MeshBasicMaterial({color:0xfff7dc}),
+ headLampOn:new THREE.MeshBasicMaterial({color:0xffffff}),
+ headLampOff:material(0xdce6f0,.2,.4),
  amber:new THREE.MeshBasicMaterial({color:0xffaa00}),
- lamp:new THREE.MeshBasicMaterial({color:0xffe5a2}),
+ lamp:new THREE.MeshBasicMaterial({color:0xffe49e}),
+ lampOff:material(0x706c61,.5,.3),
+ streetPool:new THREE.MeshBasicMaterial({
+  map:lightPoolTexture,
+  transparent:true,
+  opacity:0.65,
+  blending:THREE.AdditiveBlending,
+  depthWrite:false
+ }),
  green:material(0x17603a),
  windowLight:new THREE.MeshBasicMaterial({color:0xe8c97a}),
  line:new THREE.MeshBasicMaterial({color:0xe9e2cd}),
@@ -1246,16 +1300,28 @@ function addCylinder(parent,radius,height,mat,x,y,z){
 }
 
 function disposeGroup(group){
+ for(let i=streetLightPools.length-1;i>=0;i--){
+  if(streetLightPools[i].parent===group){
+   streetLightPools.splice(i,1);
+  }
+ }
  group.traverse(o=>{
   if(!o.isMesh)return;
   if(o.geometry&&o.geometry!==boxGeo&&o.geometry!==sphereGeo){
    o.geometry.dispose();
   }
   if(o.material){
+   const sharedMats=Object.values(M);
    if(Array.isArray(o.material)){
-    o.material.forEach(m=>{if(m.map&&m.map!==roadTexture&&m.map!==bTex1&&m.map!==bTex2&&m.map!==bTex3)m.map.dispose();m.dispose();});
-   }else if(o.material.map&&o.material.map!==roadTexture&&o.material.map!==bTex1&&o.material.map!==bTex2&&o.material.map!==bTex3){
-    o.material.map.dispose();
+    o.material.forEach(m=>{
+     if(sharedMats.includes(m))return;
+     if(m.map&&m.map!==roadTexture&&m.map!==bTex1&&m.map!==bTex2&&m.map!==bTex3&&m.map!==beamTexture&&m.map!==lightPoolTexture)m.map.dispose();
+     m.dispose();
+    });
+   }else if(!sharedMats.includes(o.material)){
+    if(o.material.map&&o.material.map!==roadTexture&&o.material.map!==bTex1&&o.material.map!==bTex2&&o.material.map!==bTex3&&o.material.map!==beamTexture&&o.material.map!==lightPoolTexture){
+     o.material.map.dispose();
+    }
     o.material.dispose();
    }
   }
@@ -1418,6 +1484,26 @@ function buildDriver(){
  }
 }
 
+function syncHeadlightVisuals(){
+ const isDark=timeOfDay==="night"||timeOfDay==="evening";
+ const spotIntensity=headlights?(timeOfDay==="night"?22:10):0;
+ const coneOpacity=headlights?(timeOfDay==="night"?0.36:0.15):0;
+
+ for(let i=0;i<headLamps.length;i++){
+  headLamps[i].intensity=spotIntensity;
+  if(headlightCones[i]){
+   headlightCones[i].visible=headlights;
+   headlightCones[i].material.opacity=coneOpacity;
+  }
+  if(headlightBulbs[i]){
+   headlightBulbs[i].material=headlights?M.headLampOn:M.headLampOff;
+  }
+ }
+ if($("lightBtn")){
+  $("lightBtn").classList.toggle("active",headlights);
+ }
+}
+
 function setupVehicleLights(){
  for(let i=player.children.length-1;i>=0;i--){
   const c=player.children[i];
@@ -1427,24 +1513,26 @@ function setupVehicleLights(){
  brakeLamps=[];
  hazardLamps=[];
  headlightCones=[];
+ headlightBulbs=[];
 
  for(const x of [-.77,.77]){
   const spot=new THREE.SpotLight(
-   0xfff2d6,0,85,.42,.6,1.2
+   0xfff5dc,0,145,.58,.75,1.0
   );
-  spot.position.set(x,.95,-2.3);
-  spot.target.position.set(x,0,-42);
+  spot.position.set(x,1.02,-2.32);
+  spot.target.position.set(x*1.15,0,-48);
 
   player.add(spot);
   player.add(spot.target);
   headLamps.push(spot);
 
-  // Volumetric Headlamp Cone Mesh
-  const coneGeo=new THREE.ConeGeometry(1.4,22,16,1,true);
-  coneGeo.translate(0,-11,0);
-  coneGeo.rotateX(-Math.PI/2);
+  // Realistic Soft-Gradient Volumetric Headlamp Beam
+  const coneGeo=new THREE.ConeGeometry(2.6,34,20,1,true);
+  coneGeo.translate(0,-17,0);
+  coneGeo.rotateX(Math.PI/2);
   const coneMat=new THREE.MeshBasicMaterial({
-   color:0xfffae0,
+   map:beamTexture,
+   color:0xfff6d6,
    transparent:true,
    opacity:0.0,
    blending:THREE.AdditiveBlending,
@@ -1452,7 +1540,9 @@ function setupVehicleLights(){
    side:THREE.DoubleSide
   });
   const coneMesh=new THREE.Mesh(coneGeo,coneMat);
-  coneMesh.position.set(x,.95,-2.4);
+  coneMesh.position.set(x,.96,-2.38);
+  coneMesh.rotation.x=-0.035;
+  coneMesh.visible=false;
   player.add(coneMesh);
   headlightCones.push(coneMesh);
 
@@ -1492,10 +1582,13 @@ function buildPlayerVehicle(){
    }
   });
   for(const x of [-.72,.72]){
+   const bulb=addBox(vehicleBody,.36,.13,.06,M.headLampOff,x,.92,-2.35);
+   headlightBulbs.push(bulb);
    const tail=addBox(vehicleBody,.38,.14,.06,M.darkRed,x,.88,2.35);
    brakeLamps.push(tail);
   }
   vehicleBody.add(clone);
+  syncHeadlightVisuals();
   return;
  }
 
@@ -1558,7 +1651,8 @@ function buildPlayerVehicle(){
  }
 
  for(const x of [-.77,.77]){
-  addBox(vehicleBody,.47,.2,.08,M.white,x,1.02,-2.39);
+  const bulb=addBox(vehicleBody,.47,.2,.08,M.headLampOff,x,1.02,-2.39);
+  headlightBulbs.push(bulb);
   const tail=addBox(vehicleBody,.43,.2,.08,M.darkRed,x,.95,2.39);
   brakeLamps.push(tail);
  }
@@ -1571,6 +1665,7 @@ function buildPlayerVehicle(){
  }
 
  buildDriver();
+ syncHeadlightVisuals();
 }
 
 /* =========================================================
@@ -1892,13 +1987,25 @@ function createRoadChunk(index){
   );
  }
 
+ const isStreetLit=timeOfDay==="night"||timeOfDay==="evening";
  for(let i=0;i<4;i++){
   const z=-CONFIG.CHUNK_LENGTH/2+26+i*52;
   for(const side of [-1,1]){
    const lx=side*(CONFIG.ROAD_WIDTH/2+1.2);
    addBox(group,.18,5.6,.18,M.black,lx,2.8,z);
-   addBox(group,1.8,.12,.12,M.black,lx-side*.75,5.6,z);
-   addBox(group,.48,.16,.28,M.lamp,lx-side*1.35,5.5,z);
+   addBox(group,2.1,.12,.12,M.black,lx-side*.9,5.6,z);
+   addBox(group,.58,.18,.34,isStreetLit?M.lamp:M.lampOff,lx-side*1.55,5.5,z);
+
+   // Glowing Ground Light Pool on Asphalt
+   const pool=new THREE.Mesh(
+    new THREE.PlaneGeometry(11.5,14),
+    M.streetPool
+   );
+   pool.rotation.x=-Math.PI/2;
+   pool.position.set(lx-side*4.2,0.035,z);
+   pool.visible=isStreetLit;
+   group.add(pool);
+   streetLightPools.push(pool);
   }
  }
 
@@ -2004,14 +2111,30 @@ function createTrafficVehicle(type,x,z,direction=1){
   group.add(wheel);
  }
 
- for(const side of [-1,1]){
-  addBox(group,.24,.18,.08,M.red,side*w*.35,h*.65,l/2+.04);
-  addBox(group,.24,.18,.08,M.white,side*w*.35,h*.65,-l/2-.04);
+ // Bright glowing taillights & headlights visible in night mode
+ const lightSides=type==="BIKE"?[0]:[-1,1];
+ for(const side of lightSides){
+  addBox(group,type==="BIKE"?.2:.32,.22,.09,M.trafficTail,side*w*.34,h*.62,l/2+.05);
+  addBox(group,type==="BIKE"?.2:.32,.22,.09,M.trafficHead,side*w*.34,h*.62,-l/2-.05);
  }
 
- // Turn indicator lights for lane switching
- const indicatorLeft=addBox(group,.12,.1,.06,M.amber,-w*.4,h*.65,-l/2-.05);
- const indicatorRight=addBox(group,.12,.1,.06,M.amber,w*.4,h*.65,-l/2-.05);
+ // Subtle road reflection strip under traffic vehicles so they stand out in dark
+ const underGlow=new THREE.Mesh(
+  new THREE.PlaneGeometry(w*1.15,l*1.15),
+  new THREE.MeshBasicMaterial({
+   color:0x4a1616,
+   transparent:true,
+   opacity:0.42,
+   blending:THREE.AdditiveBlending,
+   depthWrite:false
+  })
+ );
+ underGlow.rotation.x=-Math.PI/2;
+ underGlow.position.set(0,0.03,0);
+ group.add(underGlow);
+
+ const indicatorLeft=addBox(group,.14,.12,.07,M.amber,-w*.4,h*.65,-l/2-.06);
+ const indicatorRight=addBox(group,.14,.12,.07,M.amber,w*.4,h*.65,-l/2-.06);
  indicatorLeft.visible=false;
  indicatorRight.visible=false;
 
@@ -2188,7 +2311,6 @@ function triggerHornReaction(){
 
  for(const car of traffic){
   const distZ=car.z-player.position.z;
-  // If traffic car is directly ahead in player path (-35m to 0m)
   if(distZ<0&&distZ>-38&&Math.abs(car.x-player.position.x)<3.5){
    car.speed=Math.max(car.speed,18);
    const lanes=getTrafficLanes(car.direction);
@@ -2273,7 +2395,7 @@ function handleCollision(impactSpeed,hitX,hitZ){
    ENVIRONMENT AND WEATHER SYSTEM
    ========================================================= */
 
-function applyEnvironment(){
+function applyEnvironment(autoLights=false){
  const weatherLabelMap={
   clear:"☀ CLEAR",
   cloudy:"⛅ CLOUDY",
@@ -2302,16 +2424,18 @@ function applyEnvironment(){
   renderer.toneMappingExposure=1.0;
  }else if(timeOfDay==="evening"){
   scene.background.set(weather==="rain"?0x5c4842:0xc9855b);
-  hemi.intensity=1.1;
-  sun.intensity=.9;
-  fillLight.intensity=.25;
-  renderer.toneMappingExposure=.9;
+  hemi.intensity=1.15;
+  sun.intensity=.95;
+  fillLight.intensity=.3;
+  renderer.toneMappingExposure=.94;
+  if(autoLights)headlights=true;
  }else{
-  scene.background.set(0x07101b);
-  hemi.intensity=.38;
-  sun.intensity=.14;
-  fillLight.intensity=.12;
-  renderer.toneMappingExposure=.78;
+  scene.background.set(0x0b1524);
+  hemi.intensity=.65;
+  sun.intensity=.28;
+  fillLight.intensity=.25;
+  renderer.toneMappingExposure=1.05;
+  if(autoLights)headlights=true;
  }
 
  if(weather==="fog"){
@@ -2332,17 +2456,17 @@ function applyEnvironment(){
  }
 
  if(timeOfDay==="night"){
-  scene.fog.far=Math.min(scene.fog.far,280);
+  scene.fog.far=Math.min(scene.fog.far,340);
  }
 
  scene.fog.color.copy(scene.background);
 
- for(let i=0;i<headLamps.length;i++){
-  headLamps[i].intensity=headlights?3.2:0;
-  if(headlightCones[i]){
-   headlightCones[i].material.opacity=headlights?(timeOfDay==="night"?0.38:0.18):0;
-  }
+ const isStreetLit=timeOfDay==="night"||timeOfDay==="evening";
+ for(const pool of streetLightPools){
+  pool.visible=isStreetLit;
  }
+
+ syncHeadlightVisuals();
 }
 
 /* =========================================================
@@ -2393,7 +2517,6 @@ function createRain(){
 
  scene.add(rainPoints);
 
- // Initialize screen splash droplets
  rainSplashDrops=[];
  for(let i=0;i<35;i++){
   rainSplashDrops.push({
@@ -2425,7 +2548,6 @@ function updateRain(dt){
  attr.needsUpdate=true;
  rainPoints.position.set(player.position.x,0,player.position.z);
 
- // Render screen-space rain splash & droplets on HUD overlay
  const rainCanvas=$("rainOverlay");
  if(rainCanvas.width!==innerWidth||rainCanvas.height!==innerHeight){
   rainCanvas.width=innerWidth;
@@ -2450,7 +2572,6 @@ function updateRain(dt){
   ctx.fillStyle=`rgba(210,235,255,${drop.alpha})`;
   ctx.fill();
 
-  // Motion blur streak when driving fast
   if(speed>30){
    ctx.beginPath();
    ctx.moveTo(drop.x,drop.y);
@@ -2502,7 +2623,7 @@ function updateCamera(dt){
 }
 
 /* =========================================================
-   REALISTIC AUDIO SYSTEM (ENGINE, RAIN, HORN, CRASH, BGM)
+   REALISTIC AUDIO SYSTEM
    ========================================================= */
 
 let audioContext=null;
@@ -2732,7 +2853,6 @@ function updatePlayer(dt){
  const damagePenalty=1-(damage/100)*0.42;
  const gripFactor=isWet?0.84:1.0;
 
- // Nitro energy management
  if(nitroActive&&nitro>0){
   nitro=Math.max(0,nitro-32*dt);
   if(nitro<=0){
@@ -2835,9 +2955,6 @@ function updatePlayer(dt){
   wheel.rotation.y=smoothSteer*.36;
  }
 
- for(const light of headLamps){
-  light.intensity=headlights?3.2:0;
- }
  for(const lamp of brakeLamps){
   lamp.material=braking||handbrake?M.red:M.darkRed;
   lamp.scale.y=braking||handbrake?.26:.2;
@@ -3149,6 +3266,7 @@ function startGame(){
   fuel=100;
   nitro=100;
  }
+ applyEnvironment(true);
  startMission(activeMissionIndex);
  updateEngine();
  updateBGM();
@@ -3241,7 +3359,7 @@ function renderCharacters(){
 
   const roleEl=document.createElement("div");
   roleEl.className="char-card-sub";
-  roleEl.textContent=`${c.gender||"Driver"} • ${c.role}`;
+  roleEl.textContent=c.role;
 
   card.appendChild(avatar);
   card.appendChild(nameEl);
@@ -3372,7 +3490,7 @@ function saveSettings(){
  sfxVolume=Number($("sfxVolume").value)/100;
  bgmVolume=Number($("bgmVolume").value)/100;
 
- applyEnvironment();
+ applyEnvironment(true);
  applyGraphics();
  updateBGM();
 
@@ -3599,13 +3717,7 @@ $("cameraBtn").addEventListener("click",()=>{
 
 $("lightBtn").addEventListener("click",()=>{
  headlights=!headlights;
- $("lightBtn").classList.toggle("active",headlights);
- for(let i=0;i<headLamps.length;i++){
-  headLamps[i].intensity=headlights?3.2:0;
-  if(headlightCones[i]){
-   headlightCones[i].material.opacity=headlights?(timeOfDay==="night"?0.38:0.18):0;
-  }
- }
+ syncHeadlightVisuals();
  playTickSound(true);
  showToast(headlights?"HEADLIGHTS ON":"HEADLIGHTS OFF");
 });
@@ -3720,7 +3832,7 @@ function initializeWorld(){
  updateWorld();
  createTraffic();
 
- applyEnvironment();
+ applyEnvironment(true);
  createRain();
  applyGraphics();
 
@@ -3829,7 +3941,7 @@ async function initializeGame(){
  updateCharacter();
  updateMenuSummary();
 
- applyEnvironment();
+ applyEnvironment(true);
  applyGraphics();
 
  initializeWorld();
