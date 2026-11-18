@@ -16,6 +16,7 @@
  --muted:#9a9a9a;
  --danger:#d94343;
  --success:#39a868;
+ --nitro:#00f0ff;
 }
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{
@@ -29,6 +30,7 @@ html,body{
 button,select{font:inherit}
 button{cursor:pointer}
 #game{position:fixed;inset:0;z-index:1}
+#rainOverlay{position:fixed;inset:0;z-index:6;pointer-events:none;display:none}
 canvas{display:block}
 .hidden{display:none!important}
 
@@ -305,15 +307,17 @@ input[type="range"]{padding:4px 0;accent-color:var(--gold)}
  background:rgba(8,8,8,0.84);border:1px solid #6e5528;
  border-radius:8px;padding:6px 8px;
  font-size:9px;line-height:1.65;color:#bbb;
- min-width:96px;
+ min-width:105px;
 }
 #statsBox strong{color:var(--gold2)}
+#statsBox strong#nitro{color:var(--nitro)}
 .hud-mini-bar{
  width:100%;height:3px;background:#222;border-radius:2px;
  overflow:hidden;margin:1px 0 4px;
 }
 .hud-mini-fill{height:100%;background:var(--gold2);transition:width .15s}
 .hud-mini-fill.dmg{background:var(--danger)}
+.hud-mini-fill.nitro{background:var(--nitro)}
 
 #minimap{
  position:absolute;top:102px;right:8px;
@@ -416,6 +420,13 @@ input[type="range"]{padding:4px 0;accent-color:var(--gold)}
  background:var(--gold);color:#080808;
  border-color:#ffffff;
 }
+.extra.nitro-btn{
+ border-color:#00f0ff;color:#00f0ff;
+}
+.extra.nitro-btn.active{
+ background:#00f0ff;color:#080808;
+ box-shadow:0 0 15px rgba(0,240,255,0.6);
+}
 
 #gearControls{
  position:absolute;left:12px;bottom:135px;
@@ -485,6 +496,7 @@ input[type="range"]{padding:4px 0;accent-color:var(--gold)}
 <body>
 
 <div id="game"></div>
+<canvas id="rainOverlay"></canvas>
 <div id="impactFlash"></div>
 
 <div id="loading">
@@ -645,6 +657,8 @@ input[type="range"]{padding:4px 0;accent-color:var(--gold)}
  <div id="statsBox">
   FUEL: <strong id="fuel">100%</strong>
   <div class="hud-mini-bar"><div class="hud-mini-fill" id="fuelBar" style="width:100%"></div></div>
+  NITRO: <strong id="nitro">100%</strong>
+  <div class="hud-mini-bar"><div class="hud-mini-fill nitro" id="nitroBar" style="width:100%"></div></div>
   DAMAGE: <strong id="damage">0%</strong>
   <div class="hud-mini-bar"><div class="hud-mini-fill dmg" id="damageBar" style="width:0%"></div></div>
   RPM: <strong id="rpm">750</strong><br>
@@ -663,6 +677,9 @@ input[type="range"]{padding:4px 0;accent-color:var(--gold)}
  </div>
 
  <div id="extras">
+  <button class="extra nitro-btn" id="nitroBtn" title="Nitro Boost">
+   <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+  </button>
   <button class="extra" id="hornBtn" title="Horn">
    <svg viewBox="0 0 24 24"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
   </button>
@@ -744,7 +761,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 /* =========================================================
-   MAMUN'S DRIVE — ULTIMATE PREMIUM 3D REALISTIC EDITION
+   MAMUN'S DRIVE — ULTIMATE PREMIUM 3D MASTERCLASS EDITION
    ========================================================= */
 
 const $=id=>document.getElementById(id);
@@ -912,6 +929,9 @@ let handbrake=false;
 let parked=false;
 let gear="D";
 
+let nitro=100;
+let nitroActive=false;
+
 let headlights=false;
 let hazard=false;
 let musicEnabled=true;
@@ -951,6 +971,8 @@ let rainPoints=null;
 let toastTimer=null;
 let steeringPointer=null;
 let customCarModel=null;
+let headlightCones=[];
+let rainSplashDrops=[];
 
 /* =========================================================
    AVATAR HELPER WITH GRACEFUL FALLBACK
@@ -1016,7 +1038,7 @@ function loadSave(){
 function saveGame(){
  try{
   localStorage.setItem(CONFIG.SAVE_KEY,JSON.stringify({
-   version:6,
+   version:7,
    character:selectedCharacter,
    vehicle:selectedVehicle,
    activeMission:activeMissionIndex,
@@ -1137,7 +1159,6 @@ function createBuildingTexture(baseHex,accentHex){
  ctx.fillStyle=baseHex;
  ctx.fillRect(0,0,256,256);
 
- // Concrete weathered plaster lines
  ctx.fillStyle="rgba(0,0,0,0.08)";
  for(let y=0;y<256;y+=32){
   ctx.fillRect(0,y,256,2);
@@ -1267,7 +1288,7 @@ function getNextLocation(meters){
 }
 
 /* =========================================================
-   PLAYER VEHICLE & CUSTOM GLB LOADER
+   PLAYER VEHICLE & VOLUMETRIC HEADLAMPS
    ========================================================= */
 
 const player=new THREE.Group();
@@ -1405,17 +1426,35 @@ function setupVehicleLights(){
  headLamps=[];
  brakeLamps=[];
  hazardLamps=[];
+ headlightCones=[];
 
  for(const x of [-.77,.77]){
   const spot=new THREE.SpotLight(
-   0xffe8bd,0,75,.38,.55,1.25
+   0xfff2d6,0,85,.42,.6,1.2
   );
   spot.position.set(x,.95,-2.3);
-  spot.target.position.set(x,0,-38);
+  spot.target.position.set(x,0,-42);
 
   player.add(spot);
   player.add(spot.target);
   headLamps.push(spot);
+
+  // Volumetric Headlamp Cone Mesh
+  const coneGeo=new THREE.ConeGeometry(1.4,22,16,1,true);
+  coneGeo.translate(0,-11,0);
+  coneGeo.rotateX(-Math.PI/2);
+  const coneMat=new THREE.MeshBasicMaterial({
+   color:0xfffae0,
+   transparent:true,
+   opacity:0.0,
+   blending:THREE.AdditiveBlending,
+   depthWrite:false,
+   side:THREE.DoubleSide
+  });
+  const coneMesh=new THREE.Mesh(coneGeo,coneMat);
+  coneMesh.position.set(x,.95,-2.4);
+  player.add(coneMesh);
+  headlightCones.push(coneMesh);
 
   const hazFront=addBox(
    vehicleBody,.16,.12,.08,M.amber,
@@ -1452,7 +1491,6 @@ function buildPlayerVehicle(){
     }
    }
   });
-  // Add subtle brake lamp overlays at rear so braking feedback always shows
   for(const x of [-.72,.72]){
    const tail=addBox(vehicleBody,.38,.14,.06,M.darkRed,x,.88,2.35);
    brakeLamps.push(tail);
@@ -1483,7 +1521,6 @@ function buildPlayerVehicle(){
  if(fallbackV.type==="truck"){
   addBox(cabin,width*.85,.78,1.55,M.glass,0,1.67,-.55);
   addBox(cabin,width*.88,.14,1.45,carPaint,0,2.08,-.52);
-  // Pickup cargo bed walls
   addBox(vehicleBody,width*.95,.48,.12,carPaint,0,1.42,2.45);
   for(const side of [-1,1]){
    addBox(vehicleBody,.12,.48,2.35,carPaint,side*(width*.44),1.42,1.3);
@@ -1683,7 +1720,6 @@ function createBuilding(parent,x,z,index,area){
   addBox(building,1.7,1.5,1.7,M.white,0,height+.95,0);
  }
 
- // Rotate building so its front facade faces the road cleanly
  building.rotation.y=x<0?Math.PI/2:-Math.PI/2;
  building.position.set(x,0,z);
  parent.add(building);
@@ -1780,34 +1816,28 @@ function createRoadChunk(index){
  const roadMat=isWet?M.wetRoad:M.road;
  const hasIntersection=(index%7===3);
 
- /* Road surface */
  addBox(
   group,CONFIG.ROAD_WIDTH,.22,
   CONFIG.CHUNK_LENGTH,
   roadMat,0,-.12,0
  );
 
- /* Sidewalks, Drains & Green Verges */
  for(const side of [-1,1]){
-  // Roadside drainage channel
   addBox(
    group,.55,.2,CONFIG.CHUNK_LENGTH,
    M.drain,side*(CONFIG.ROAD_WIDTH/2+.28),-.11,0
   );
 
-  // Pedestrian footpath
   addBox(
    group,2.4,.32,CONFIG.CHUNK_LENGTH,
    M.sidewalk,side*(CONFIG.ROAD_WIDTH/2+1.75),-.05,0
   );
 
-  // Outer ground terrain
   addBox(
    group,26,.12,CONFIG.CHUNK_LENGTH,
    M.grass,side*(CONFIG.ROAD_WIDTH/2+15.5),-.22,0
   );
 
-  // Roadside buildings & trees placed safely behind footpath (x >= 18.5)
   for(let i=0;i<6;i++){
    const z=-CONFIG.CHUNK_LENGTH/2+18+i*35;
    const buildingX=side*(CONFIG.ROAD_WIDTH/2+9.5+seeded(index*5+i)*4.5);
@@ -1824,7 +1854,6 @@ function createRoadChunk(index){
   }
  }
 
- /* Center Divider or Double Yellow Line */
  if(area.divider){
   const segCount=11;
   const segLen=CONFIG.CHUNK_LENGTH/segCount;
@@ -1847,7 +1876,6 @@ function createRoadChunk(index){
   }
  }
 
- /* Lane dashed markings */
  for(const laneX of [-5.2,5.2]){
   for(let i=0;i<22;i++){
    addBox(
@@ -1857,7 +1885,6 @@ function createRoadChunk(index){
   }
  }
 
- /* Road edge markings */
  for(const side of [-1,1]){
   addBox(
    group,.16,.03,CONFIG.CHUNK_LENGTH,
@@ -1865,7 +1892,6 @@ function createRoadChunk(index){
   );
  }
 
- /* Streetlights */
  for(let i=0;i<4;i++){
   const z=-CONFIG.CHUNK_LENGTH/2+26+i*52;
   for(const side of [-1,1]){
@@ -1913,7 +1939,7 @@ function updateWorld(){
 }
 
 /* =========================================================
-   ADVANCED BANGLADESH TRAFFIC AI SYSTEM
+   ADVANCED BANGLADESH TRAFFIC AI & LANE SWITCHING
    ========================================================= */
 
 function createTrafficVehicle(type,x,z,direction=1){
@@ -1983,6 +2009,12 @@ function createTrafficVehicle(type,x,z,direction=1){
   addBox(group,.24,.18,.08,M.white,side*w*.35,h*.65,-l/2-.04);
  }
 
+ // Turn indicator lights for lane switching
+ const indicatorLeft=addBox(group,.12,.1,.06,M.amber,-w*.4,h*.65,-l/2-.05);
+ const indicatorRight=addBox(group,.12,.1,.06,M.amber,w*.4,h*.65,-l/2-.05);
+ indicatorLeft.visible=false;
+ indicatorRight.visible=false;
+
  group.rotation.y=direction===1?0:Math.PI;
  group.position.set(x,0,z);
  scene.add(group);
@@ -2000,7 +2032,9 @@ function createTrafficVehicle(type,x,z,direction=1){
   speed:baseSpeed,
   baseSpeed,width:w,length:l,
   targetX:x,
-  overtakeTimer:0
+  overtakeTimer:Math.random()*8,
+  indicatorLeft,
+  indicatorRight
  };
 }
 
@@ -2069,13 +2103,31 @@ function updateTraffic(dt){
    target=Math.min(target,Math.max(0,Math.abs(speed)/3.6*0.75));
   }
 
-  car.overtakeTimer=Math.max(0,car.overtakeTimer-dt);
-  if(blockedAhead&&car.overtakeTimer<=0&&car.type!=="RICKSHAW"&&car.type!=="BUS"){
+  car.overtakeTimer-=dt;
+  const isSwitching=Math.abs(car.x-car.targetX)>0.1;
+
+  if(isSwitching){
+   const blinkOn=Math.floor(performance.now()/250)%2===0;
+   if(car.targetX>car.x){
+    car.indicatorRight.visible=blinkOn;
+    car.indicatorLeft.visible=false;
+   }else{
+    car.indicatorLeft.visible=blinkOn;
+    car.indicatorRight.visible=false;
+   }
+  }else{
+   car.indicatorLeft.visible=false;
+   car.indicatorRight.visible=false;
+  }
+
+  if(car.overtakeTimer<=0&&car.type!=="RICKSHAW"&&car.type!=="BUS"){
    const lanes=getTrafficLanes(car.direction);
    const altLane=lanes.find(l=>Math.abs(l-car.targetX)>1.5);
-   if(altLane!==undefined&&isSpawnClear(altLane,car.z,18)){
+   if(altLane!==undefined&&isSpawnClear(altLane,car.z,22)){
     car.targetX=altLane;
-    car.overtakeTimer=6+Math.random()*5;
+    car.overtakeTimer=8+Math.random()*7;
+   }else{
+    car.overtakeTimer=4+Math.random()*4;
    }
   }
 
@@ -2115,6 +2167,34 @@ function updateTraffic(dt){
    const relSpeed=Math.abs(speed-car.speed*3.6*(-car.direction));
    if(relSpeed>10&&performance.now()-lastCollision>750){
     handleCollision(relSpeed,car.x,car.z);
+   }
+  }
+ }
+}
+
+/* =========================================================
+   HORN REACTION (CLEAR TRAFFIC)
+   ========================================================= */
+
+function triggerHornReaction(){
+ startHorn();
+ $("hornBtn").classList.add("active");
+ setTimeout(()=>{
+  $("hornBtn").classList.remove("active");
+  stopHorn();
+ },500);
+
+ showToast("HORN ACTIVATED • TRAFFIC CLEARING");
+
+ for(const car of traffic){
+  const distZ=car.z-player.position.z;
+  // If traffic car is directly ahead in player path (-35m to 0m)
+  if(distZ<0&&distZ>-38&&Math.abs(car.x-player.position.x)<3.5){
+   car.speed=Math.max(car.speed,18);
+   const lanes=getTrafficLanes(car.direction);
+   const freeLane=lanes.find(l=>Math.abs(l-car.targetX)>1.5);
+   if(freeLane!==undefined){
+    car.targetX=freeLane;
    }
   }
  }
@@ -2257,13 +2337,16 @@ function applyEnvironment(){
 
  scene.fog.color.copy(scene.background);
 
- for(const l of headLamps){
-  l.intensity=headlights?2.8:0;
+ for(let i=0;i<headLamps.length;i++){
+  headLamps[i].intensity=headlights?3.2:0;
+  if(headlightCones[i]){
+   headlightCones[i].material.opacity=headlights?(timeOfDay==="night"?0.38:0.18):0;
+  }
  }
 }
 
 /* =========================================================
-   RAIN PARTICLE SYSTEM
+   RAIN PARTICLE SYSTEM & SCREEN SPLASH DROPS
    ========================================================= */
 
 function createRain(){
@@ -2274,7 +2357,12 @@ function createRain(){
   rainPoints=null;
  }
 
- if(weather!=="rain"&&weather!=="heavy_rain")return;
+ const rainCanvas=$("rainOverlay");
+ if(weather!=="rain"&&weather!=="heavy_rain"){
+  rainCanvas.style.display="none";
+  return;
+ }
+ rainCanvas.style.display="block";
 
  const baseCount=
   graphicsQuality==="low"?250:
@@ -2304,6 +2392,18 @@ function createRain(){
  );
 
  scene.add(rainPoints);
+
+ // Initialize screen splash droplets
+ rainSplashDrops=[];
+ for(let i=0;i<35;i++){
+  rainSplashDrops.push({
+   x:Math.random()*innerWidth,
+   y:Math.random()*innerHeight,
+   r:2+Math.random()*6,
+   alpha:Math.random()*0.6,
+   speed:120+Math.random()*250
+  });
+ }
 }
 
 function updateRain(dt){
@@ -2324,10 +2424,44 @@ function updateRain(dt){
 
  attr.needsUpdate=true;
  rainPoints.position.set(player.position.x,0,player.position.z);
+
+ // Render screen-space rain splash & droplets on HUD overlay
+ const rainCanvas=$("rainOverlay");
+ if(rainCanvas.width!==innerWidth||rainCanvas.height!==innerHeight){
+  rainCanvas.width=innerWidth;
+  rainCanvas.height=innerHeight;
+ }
+ const ctx=rainCanvas.getContext("2d");
+ ctx.clearRect(0,0,innerWidth,innerHeight);
+
+ const speedRatio=Math.min(Math.abs(speed)/180,1);
+ ctx.strokeStyle="rgba(200,230,255,0.35)";
+ ctx.lineWidth=1.5;
+
+ for(const drop of rainSplashDrops){
+  drop.y+=(drop.speed+speedRatio*180)*dt;
+  if(drop.y>innerHeight){
+   drop.y=-20;
+   drop.x=Math.random()*innerWidth;
+  }
+
+  ctx.beginPath();
+  ctx.arc(drop.x,drop.y,drop.r,0,Math.PI*2);
+  ctx.fillStyle=`rgba(210,235,255,${drop.alpha})`;
+  ctx.fill();
+
+  // Motion blur streak when driving fast
+  if(speed>30){
+   ctx.beginPath();
+   ctx.moveTo(drop.x,drop.y);
+   ctx.lineTo(drop.x-speedRatio*6,drop.y-drop.r*4);
+   ctx.stroke();
+  }
+ }
 }
 
 /* =========================================================
-   CAMERA SYSTEM WITH IMPACT SHAKE & SPEED FOV
+   CAMERA SYSTEM WITH NITRO FOV KICK & SHAKE
    ========================================================= */
 
 const cameraTarget=new THREE.Vector3();
@@ -2335,7 +2469,8 @@ const cameraPosition=new THREE.Vector3();
 
 function updateCamera(dt){
  const speedRatio=Math.min(Math.abs(speed)/180,1);
- const targetFov=70+speedRatio*11;
+ const nitroFovBoost=nitroActive?12:0;
+ const targetFov=70+speedRatio*11+nitroFovBoost;
  camera.fov=THREE.MathUtils.lerp(camera.fov,targetFov,Math.min(1,dt*4));
  camera.updateProjectionMatrix();
 
@@ -2348,6 +2483,11 @@ function updateCamera(dt){
  }else{
   cameraPosition.set(player.position.x,6.8,player.position.z+14.8);
   cameraTarget.set(player.position.x,1.0,player.position.z-12);
+ }
+
+ if(nitroActive){
+  cameraPosition.x+=(Math.random()-.5)*0.22;
+  cameraPosition.y+=(Math.random()-.5)*0.22;
  }
 
  if(cameraShake>0.005){
@@ -2472,12 +2612,12 @@ function updateEngine(){
  const absSpeed=Math.abs(speed);
  const gearSpan=36;
  const gearProgress=(absSpeed%gearSpan)/gearSpan;
- const baseFreq=38+gearProgress*48+(absSpeed*0.22);
+ const baseFreq=38+gearProgress*48+(absSpeed*0.22)+(nitroActive?35:0);
 
  engineOsc1.frequency.setTargetAtTime(baseFreq,audioContext.currentTime,.08);
  engineOsc2.frequency.setTargetAtTime(baseFreq*2.01,audioContext.currentTime,.08);
  engineFilter.frequency.setTargetAtTime(
-  130+absSpeed*3.5+(accelerator?95:0),
+  130+absSpeed*3.5+(accelerator?95:0)+(nitroActive?60:0),
   audioContext.currentTime,.1
  );
 
@@ -2581,7 +2721,7 @@ function playTickSound(high=true){
 }
 
 /* =========================================================
-   REALISTIC VEHICLE PHYSICS
+   REALISTIC VEHICLE PHYSICS & NITRO BOOST SYSTEM
    ========================================================= */
 
 function updatePlayer(dt){
@@ -2591,6 +2731,20 @@ function updatePlayer(dt){
 
  const damagePenalty=1-(damage/100)*0.42;
  const gripFactor=isWet?0.84:1.0;
+
+ // Nitro energy management
+ if(nitroActive&&nitro>0){
+  nitro=Math.max(0,nitro-32*dt);
+  if(nitro<=0){
+   nitroActive=false;
+   $("nitroBtn").classList.remove("active");
+   showToast("NITRO DEPLETED");
+  }
+ }else if(!nitroActive&&accelerator){
+  nitro=Math.min(100,nitro+10*dt);
+ }else if(!nitroActive){
+  nitro=Math.min(100,nitro+15*dt);
+ }
 
  if(fuel<=0){
   accelerator=false;
@@ -2603,7 +2757,8 @@ function updatePlayer(dt){
   speed=THREE.MathUtils.lerp(speed,0,dt*5.2*gripFactor);
  }else if(accelerator){
   if(gear==="D"){
-   speed+=vehicle.accel*damagePenalty*dt;
+   const accelMultiplier=nitroActive?1.65:1.0;
+   speed+=vehicle.accel*accelMultiplier*damagePenalty*dt;
   }else if(gear==="R"){
    speed-=CONFIG.ACCELERATION*.55*damagePenalty*dt;
   }
@@ -2612,8 +2767,9 @@ function updatePlayer(dt){
   else if(speed<0)speed=Math.min(0,speed+CONFIG.FRICTION*dt);
  }
 
+ const topSpeedBoost=nitroActive?1.35:1.0;
  const maxSpeed=gear==="R"?
-  CONFIG.REVERSE_SPEED:vehicle.max*damagePenalty;
+  CONFIG.REVERSE_SPEED:vehicle.max*topSpeedBoost*damagePenalty;
 
  speed=THREE.MathUtils.clamp(speed,-CONFIG.REVERSE_SPEED,maxSpeed);
 
@@ -2680,7 +2836,7 @@ function updatePlayer(dt){
  }
 
  for(const light of headLamps){
-  light.intensity=headlights?2.8:0;
+  light.intensity=headlights?3.2:0;
  }
  for(const lamp of brakeLamps){
   lamp.material=braking||handbrake?M.red:M.darkRed;
@@ -2688,7 +2844,7 @@ function updatePlayer(dt){
  }
 
  if(accelerator&&Math.abs(speed)>1){
-  fuel=Math.max(0,fuel-.00065*dt*Math.abs(speed));
+  fuel=Math.max(0,fuel-.00065*dt*Math.abs(speed)*(nitroActive?2.2:1));
  }
 
  const rpm=Math.round(750+Math.abs(speed)*42);
@@ -2701,8 +2857,10 @@ function updatePlayer(dt){
 
 function updateStats(){
  $("fuel").textContent=Math.round(fuel)+"%";
+ $("nitro").textContent=Math.round(nitro)+"%";
  $("damage").textContent=Math.round(damage)+"%";
  $("fuelBar").style.width=Math.round(fuel)+"%";
+ $("nitroBar").style.width=Math.round(nitro)+"%";
  $("damageBar").style.width=Math.round(damage)+"%";
  $("hudScore").textContent=coins.toLocaleString();
 }
@@ -2895,12 +3053,14 @@ function applyGraphics(){
 function resetControls(){
  accelerator=false;
  braking=false;
+ nitroActive=false;
  steering=0;
  stopHorn();
 
  $("accelBtn").classList.remove("active");
  $("brakeBtn").classList.remove("active");
  $("hornBtn").classList.remove("active");
+ $("nitroBtn").classList.remove("active");
 
  $("steering").style.transform="rotate(0deg)";
  steeringPointer=null;
@@ -2987,6 +3147,7 @@ function startGame(){
  if(damage>=100){
   damage=0;
   fuel=100;
+  nitro=100;
  }
  startMission(activeMissionIndex);
  updateEngine();
@@ -3033,6 +3194,7 @@ function restartGame(){
  speed=0;
  velocityX=0;
  fuel=100;
+ nitro=100;
  damage=0;
 
  player.position.set(-3.2,0,0);
@@ -3079,7 +3241,7 @@ function renderCharacters(){
 
   const roleEl=document.createElement("div");
   roleEl.className="char-card-sub";
-  roleEl.textContent=`${c.gender} • ${c.role}`;
+  roleEl.textContent=`${c.gender||"Driver"} • ${c.role}`;
 
   card.appendChild(avatar);
   card.appendChild(nameEl);
@@ -3260,7 +3422,17 @@ function holdButton(element,start,end){
 
 holdButton($("accelBtn"),()=>{accelerator=true;},()=>{accelerator=false;});
 holdButton($("brakeBtn"),()=>{braking=true;},()=>{braking=false;});
-holdButton($("hornBtn"),()=>{startHorn();},()=>{stopHorn();});
+holdButton($("hornBtn"),triggerHornReaction,()=>{stopHorn();});
+holdButton($("nitroBtn"),()=>{
+ if(nitro>5){
+  nitroActive=true;
+  $("nitroBtn").classList.add("active");
+  showToast("NITRO BOOST ENGAGED!");
+ }
+},()=>{
+ nitroActive=false;
+ $("nitroBtn").classList.remove("active");
+});
 
 const steeringElement=$("steering");
 
@@ -3308,8 +3480,12 @@ window.addEventListener("keydown",e=>{
  if(key==="arrowright"||key==="d")steering=1;
  if(key===" ")handbrake=true;
  if(key==="h"){
-  $("hornBtn").classList.add("active");
-  startHorn();
+  triggerHornReaction();
+ }
+ if(key==="n"&&nitro>5){
+  nitroActive=true;
+  $("nitroBtn").classList.add("active");
+  showToast("NITRO BOOST ENGAGED!");
  }
  if(key==="escape"){
   paused?resumeGame():pauseGame();
@@ -3323,9 +3499,9 @@ window.addEventListener("keyup",e=>{
  if(key==="arrowdown"||key==="s")braking=false;
  if(["arrowleft","arrowright","a","d"].includes(key))steering=0;
  if(key===" ")handbrake=false;
- if(key==="h"){
-  $("hornBtn").classList.remove("active");
-  stopHorn();
+ if(key==="n"){
+  nitroActive=false;
+  $("nitroBtn").classList.remove("active");
  }
 });
 
@@ -3424,8 +3600,11 @@ $("cameraBtn").addEventListener("click",()=>{
 $("lightBtn").addEventListener("click",()=>{
  headlights=!headlights;
  $("lightBtn").classList.toggle("active",headlights);
- for(const light of headLamps){
-  light.intensity=headlights?2.8:0;
+ for(let i=0;i<headLamps.length;i++){
+  headLamps[i].intensity=headlights?3.2:0;
+  if(headlightCones[i]){
+   headlightCones[i].material.opacity=headlights?(timeOfDay==="night"?0.38:0.18):0;
+  }
  }
  playTickSound(true);
  showToast(headlights?"HEADLIGHTS ON":"HEADLIGHTS OFF");
@@ -3519,9 +3698,10 @@ $("refuelBtn").addEventListener("click",()=>{
   return;
  }
  fuel=100;
+ nitro=100;
  updateStats();
  saveGame();
- showToast("FUEL TANK REFILLED (100%)");
+ showToast("FUEL & NITRO REFILLED (100%)");
 });
 
 /* =========================================================
