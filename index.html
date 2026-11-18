@@ -1317,8 +1317,8 @@ function material(color,roughness=.8,metalness=0,map=null){
 }
 
 const M={
- road:material(0xffffff,.92,0,roadTexture),
- wetRoad:material(0x9fb2c4,.22,.28,roadTexture),
+ road:material(0x383b40,.9,0.05,roadTexture),
+ wetRoad:material(0x687885,.25,0.3,roadTexture),
  flyoverDeck:material(0x36393e,.85,.08,roadTexture),
  flyoverConcrete:material(0x9e9a90,.88,0),
  flyoverPillar:material(0x7c786e,.9,0),
@@ -1448,7 +1448,7 @@ function getNextLocation(meters){
 }
 
 /* =========================================================
-   PLAYER VEHICLE & VOLUMETRIC HEADLAMPS
+   PLAYER VEHICLE & FRONT-ONLY HEADLAMPS
    ========================================================= */
 
 const player=new THREE.Group();
@@ -1609,6 +1609,7 @@ function setupVehicleLights(){
  headlightBulbs=[];
 
  for(const x of [-.77,.77]){
+  // FRONT ONLY HEADLIGHTS & SPOTLIGHTS (Strictly pointing forward along -Z axis)
   const spot=new THREE.SpotLight(
    0xfff5dc,0,145,.58,.75,1.0
   );
@@ -2083,7 +2084,7 @@ function createRealisticIntersection(parent,worldMeters,chunkCenter){
 }
 
 /* =========================================================
-   SMOOTH CURVED ROAD CHUNKS WITH FLYOVER DECKS & RAMPS
+   SMOOTH CURVED ROAD CHUNKS & ULTRA-SMOOTH FLYOVER RAMPS
    ========================================================= */
 
 function createRoadChunk(index){
@@ -2095,11 +2096,23 @@ function createRoadChunk(index){
  const roadMat=isWet?M.wetRoad:M.road;
  const isStreetLit=timeOfDay==="night"||timeOfDay==="evening";
 
- const sliceCount=Math.round(CONFIG.CHUNK_LENGTH/CONFIG.SLICE_LENGTH);
+ // Use finer slice length (2m instead of 8m) on flyover/ramp chunks to completely eliminate staircase stepping
+ const chunkStartM=index*CONFIG.CHUNK_LENGTH;
+ const chunkEndM=(index+1)*CONFIG.CHUNK_LENGTH;
+ let hasFlyoverInChunk=false;
+ for(let m=chunkStartM;m<=chunkEndM;m+=15){
+  if(getFlyoverDeckY(m)>0.01){
+   hasFlyoverInChunk=true;
+   break;
+  }
+ }
+ const sliceLen=hasFlyoverInChunk?2.5:CONFIG.SLICE_LENGTH;
+ const sliceCount=Math.round(CONFIG.CHUNK_LENGTH/sliceLen);
 
  for(let s=0;s<sliceCount;s++){
-  const sliceStartM=index*CONFIG.CHUNK_LENGTH+s*CONFIG.SLICE_LENGTH;
-  const sliceEndM=sliceStartM+CONFIG.SLICE_LENGTH;
+  const sliceStartM=index*CONFIG.CHUNK_LENGTH+s*sliceLen;
+  const sliceEndM=Math.min((index+1)*CONFIG.CHUNK_LENGTH,sliceStartM+sliceLen);
+  const actualSliceLen=sliceEndM-sliceStartM;
   const sliceMidM=(sliceStartM+sliceEndM)*0.5;
 
   const worldZ1=-sliceStartM;
@@ -2112,8 +2125,8 @@ function createRoadChunk(index){
   const localZ=worldZMid-center;
 
   const dx=x2-x1;
-  const dz=-CONFIG.SLICE_LENGTH;
-  const segLen=Math.hypot(dx,dz)+0.35;
+  const dz=-actualSliceLen;
+  const segLen=Math.hypot(dx,dz)+0.15;
   const angle=Math.atan2(dx,dz);
 
   const sliceGroup=new THREE.Group();
@@ -2141,7 +2154,7 @@ function createRoadChunk(index){
 
   if(hasFlyover){
    const dy=fy2-fy1;
-   const rampLen=Math.hypot(segLen,dy)+0.25;
+   const rampLen=Math.hypot(segLen,dy)+0.15;
    const slopeAngle=Math.atan2(dy,segLen);
 
    const deckGroup=new THREE.Group();
@@ -2161,12 +2174,12 @@ function createRoadChunk(index){
 
    sliceGroup.add(deckGroup);
 
-   if(fyMid>2.2&&s%3===0){
+   if(fyMid>2.2&&s%4===0){
     addCylinder(sliceGroup,.72,fyMid-.4,M.flyoverPillar,0,(fyMid-.4)/2,0);
     addBox(sliceGroup,CONFIG.FLYOVER_WIDTH-.8,.55,1.4,M.flyoverConcrete,0,fyMid-.55,0);
    }
 
-   if(fyMid>3.5&&s%5===0){
+   if(fyMid>3.5&&s%8===0){
     for(const side of [-1,1]){
      const px=side*(CONFIG.FLYOVER_WIDTH/2-.22);
      addBox(sliceGroup,.14,4.4,.14,M.black,px,fyMid+2.2,0);
@@ -3134,7 +3147,7 @@ function playTickSound(high=true){
 }
 
 /* =========================================================
-   PLAYER VEHICLE PHYSICS (CORRECT FORWARD/REVERSE & RAMP)
+   PLAYER VEHICLE PHYSICS
    ========================================================= */
 
 function updatePlayer(dt){
