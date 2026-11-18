@@ -535,7 +535,7 @@ input[type="range"]{padding:4px 0;accent-color:var(--gold)}
   <button class="menu-btn secondary" id="statsBtn">PLAYER PROFILE</button>
   <div class="small-note">
    CHATTOGRAM • BANGLADESH<br>
-   MURADPUR TO RANGAMATI ROAD • REALISTIC SIMULATOR
+   MURADPUR TO RANGAMATI ROAD • SMOOTH FLYOVERS
   </div>
  </div>
 </div>
@@ -651,7 +651,7 @@ input[type="range"]{padding:4px 0;accent-color:var(--gold)}
   <div id="driverHudName">MAMUN</div>
  </div>
 
- <div id="distanceBox">DISTANCE: 0.00 KM</div>
+ <div id="distanceBox">DISTANCE: 0.00 KM • GROUND</div>
  <div id="missionBox">MISSION: EXPLORE CHITTAGONG</div>
 
  <div id="statsBox">
@@ -762,13 +762,15 @@ import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 /* =========================================================
    MAMUN'S DRIVE — ULTIMATE PREMIUM 3D MASTERCLASS EDITION
+   SMOOTH CURVED HIGHWAYS & REALISTIC FLYOVER RAMPS
    ========================================================= */
 
 const $=id=>document.getElementById(id);
 
 const CONFIG={
- ROAD_WIDTH:22,
+ ROAD_WIDTH:26,
  CHUNK_LENGTH:220,
+ SLICE_LENGTH:8,
  CHUNKS_BEHIND:2,
  CHUNKS_AHEAD:9,
  MAX_SPEED:190,
@@ -776,12 +778,15 @@ const CONFIG={
  ACCELERATION:24,
  BRAKE_POWER:95,
  FRICTION:7.5,
- MAX_STEER:5.4,
- TRAFFIC_COUNT:28,
+ MAX_STEER:5.8,
+ TRAFFIC_COUNT:30,
  SAVE_KEY:"mamuns_drive_v3_save",
  COLLISION_DISTANCE:3.5,
  PLAYER_GLB_PATH:"./player-car.glb",
- BGM_URL:"./bgm.mp3"
+ BGM_URL:"./bgm.mp3",
+ FLYOVER_WIDTH:10.4,
+ FLYOVER_HEIGHT:6.5,
+ FLYOVER_RAMP_LEN:140
 };
 
 const characters=[
@@ -842,6 +847,14 @@ const locations=[
  {name:"RANGAMATI ROAD",bn:"রাঙ্গামাটি রোড",km:102,style:"green",density:0.45,divider:false}
 ];
 
+const flyovers=[
+ {name:"AKHTARUZZAMAN FLYOVER (MURADPUR - GEC)",startM:350,endM:1950},
+ {name:"2 NO. GATE - GEC OVERPASS",startM:4200,endM:5800},
+ {name:"GEC - WASA EXPRESS FLYOVER",startM:9200,endM:10850},
+ {name:"LALKHAN BAZAR - TIGERPASS FLYOVER",startM:31800,endM:33500},
+ {name:"BAHADDARHAT FLYOVER",startM:72600,endM:74400}
+];
+
 const shopSigns=[
  "CHATTOGRAM MOTORS","BISMILLAH STORE","AGRABAD TRADERS","GEC PLAZA",
  "MURADPUR PHARMACY","KARNAPHULI ELECTRONICS","NEW MARKET CENTRE",
@@ -853,8 +866,15 @@ const missions=[
   id:"free_explore",
   title:"EXPLORE CHATTOGRAM",
   difficulty:"FREE ROAM",
-  desc:"Drive freely from Muradpur to Rangamati Road and discover all 16 landmarks.",
+  desc:"Drive freely on smooth curved roads and realistic flyovers from Muradpur to Rangamati.",
   type:"free",target:0,reward:500
+ },
+ {
+  id:"flyover_express",
+  title:"AKHTARUZZAMAN FLYOVER RUN",
+  difficulty:"EASY",
+  desc:"Take the center ramp onto the Muradpur Flyover and drive 2.5 KM above traffic!",
+  type:"flyover_distance",targetKm:2.5,minFlyoverKm:0.7,reward:3000
  },
  {
   id:"gec_sprint",
@@ -867,7 +887,7 @@ const missions=[
   id:"chawkbazar_rush",
   title:"CHAWKBAZAR TIMED RUN",
   difficulty:"MEDIUM",
-  desc:"Drive 6.0 KM through busy city traffic within 210 seconds.",
+  desc:"Drive 6.0 KM through busy curved city traffic within 210 seconds.",
   type:"timed_distance",targetKm:6.0,timeLimit:210,maxDamage:40,reward:4500
  },
  {
@@ -881,7 +901,7 @@ const missions=[
   id:"highway_cruise",
   title:"PORT CITY SPEED TEST",
   difficulty:"HARD",
-  desc:"Maintain highway pace and cover 12.0 KM with at least 60% average speed.",
+  desc:"Maintain highway pace and cover 12.0 KM with at least 55 KM/H average speed.",
   type:"speed_distance",targetKm:12.0,minAvgSpeed:55,reward:8500
  },
  {
@@ -903,6 +923,72 @@ const trafficColors=[
 ];
 
 /* =========================================================
+   SMOOTH HIGHWAY & FLYOVER MATH (NO STAIRS)
+   ========================================================= */
+
+function getRoadCenterX(z){
+ const s=Math.max(0,-z);
+ if(s<100)return 0;
+ const blend=THREE.MathUtils.smoothstep(s,100,260);
+ const curve=
+  Math.sin(s*0.0018)*28+
+  Math.sin(s*0.0042+0.8)*12+
+  Math.cos(s*0.0009)*18;
+ return curve*blend;
+}
+
+function getRoadTangentAngle(z){
+ const eps=1.0;
+ const x1=getRoadCenterX(z+eps);
+ const x2=getRoadCenterX(z-eps);
+ return Math.atan2(x1-x2,2*eps);
+}
+
+function getFlyoverZone(meters){
+ for(const f of flyovers){
+  if(meters>=f.startM&&meters<=f.endM)return f;
+ }
+ const cycle=6000;
+ const mod=meters%cycle;
+ if(meters>12000&&mod>=2200&&mod<=3800){
+  const base=Math.floor(meters/cycle)*cycle;
+  return{name:"CHATTOGRAM EXPRESS OVERPASS",startM:base+2200,endM:base+3800};
+ }
+ return null;
+}
+
+function getFlyoverDeckY(meters){
+ const f=getFlyoverZone(meters);
+ if(!f)return 0;
+ const ramp=CONFIG.FLYOVER_RAMP_LEN;
+ const h=CONFIG.FLYOVER_HEIGHT;
+ if(meters<f.startM+ramp){
+  const t=(meters-f.startM)/ramp;
+  return h*(0.5-0.5*Math.cos(t*Math.PI));
+ }
+ if(meters>f.endM-ramp){
+  const t=(f.endM-meters)/ramp;
+  return h*(0.5-0.5*Math.cos(t*Math.PI));
+ }
+ return h;
+}
+
+function getFlyoverSlope(meters){
+ const eps=0.5;
+ const y1=getFlyoverDeckY(meters-eps);
+ const y2=getFlyoverDeckY(meters+eps);
+ return Math.atan2(y2-y1,2*eps);
+}
+
+function isIntersectionAt(meters){
+ if(meters<320)return false;
+ if(getFlyoverDeckY(meters)>0.2)return false;
+ const step=1100;
+ const rem=meters%step;
+ return rem<18||rem>(step-18);
+}
+
+/* =========================================================
    STATE VARIABLES
    ========================================================= */
 
@@ -918,6 +1004,9 @@ let paused=false;
 let initialized=false;
 
 let speed=0;
+let roadOffset= -6.8;
+let playerY=0;
+let onFlyover=false;
 let velocityX=0;
 let distance=0;
 let totalDistance=0;
@@ -954,13 +1043,13 @@ let lastBlinkState=false;
 let cameraShake=0;
 let suspensionPhase=0;
 
-// Active Mission Tracking
 let missionState={
  startDist:0,
  elapsed:0,
  crashes:0,
  speedSamples:0,
  speedSum:0,
+ flyoverDist:0,
  finished:false
 };
 
@@ -994,7 +1083,7 @@ function renderAvatar(container,charObj){
 }
 
 /* =========================================================
-   SAVE SYSTEM (BACKWARD COMPATIBLE)
+   SAVE SYSTEM
    ========================================================= */
 
 function clampInt(v,min,max){
@@ -1040,7 +1129,7 @@ function loadSave(){
 function saveGame(){
  try{
   localStorage.setItem(CONFIG.SAVE_KEY,JSON.stringify({
-   version:7,
+   version:9,
    character:selectedCharacter,
    vehicle:selectedVehicle,
    activeMission:activeMissionIndex,
@@ -1131,10 +1220,11 @@ function createRoadTexture(){
  ctx.fillStyle="#26282b";
  ctx.fillRect(0,0,512,512);
 
- ctx.fillStyle="rgba(16,17,19,0.32)";
- ctx.fillRect(75,0,70,512);
- ctx.fillRect(205,0,70,512);
- ctx.fillRect(365,0,70,512);
+ ctx.fillStyle="rgba(16,17,19,0.34)";
+ ctx.fillRect(65,0,65,512);
+ ctx.fillRect(190,0,65,512);
+ ctx.fillRect(320,0,65,512);
+ ctx.fillRect(410,0,55,512);
 
  for(let i=0;i<22000;i++){
   const v=22+Math.random()*38;
@@ -1146,7 +1236,7 @@ function createRoadTexture(){
  tex.colorSpace=THREE.SRGBColorSpace;
  tex.wrapS=THREE.RepeatWrapping;
  tex.wrapT=THREE.RepeatWrapping;
- tex.repeat.set(2,14);
+ tex.repeat.set(2,2);
  return tex;
 }
 
@@ -1229,6 +1319,9 @@ function material(color,roughness=.8,metalness=0,map=null){
 const M={
  road:material(0xffffff,.92,0,roadTexture),
  wetRoad:material(0x9fb2c4,.22,.28,roadTexture),
+ flyoverDeck:material(0x36393e,.85,.08,roadTexture),
+ flyoverConcrete:material(0x9e9a90,.88,0),
+ flyoverPillar:material(0x7c786e,.9,0),
  sidewalk:material(0x8d8980,.9),
  drain:material(0x16181a,.95),
  grass:material(0x3f5932,1),
@@ -1246,6 +1339,7 @@ const M={
  building3:material(0xffffff,.85,0,bTex3),
  red:new THREE.MeshBasicMaterial({color:0xff2222}),
  darkRed:new THREE.MeshBasicMaterial({color:0x660a0a}),
+ signalGreen:new THREE.MeshBasicMaterial({color:0x22ee66}),
  trafficTail:new THREE.MeshBasicMaterial({color:0xff1e1e}),
  trafficHead:new THREE.MeshBasicMaterial({color:0xfff7dc}),
  headLampOn:new THREE.MeshBasicMaterial({color:0xffffff}),
@@ -1485,7 +1579,6 @@ function buildDriver(){
 }
 
 function syncHeadlightVisuals(){
- const isDark=timeOfDay==="night"||timeOfDay==="evening";
  const spotIntensity=headlights?(timeOfDay==="night"?22:10):0;
  const coneOpacity=headlights?(timeOfDay==="night"?0.36:0.15):0;
 
@@ -1526,10 +1619,9 @@ function setupVehicleLights(){
   player.add(spot.target);
   headLamps.push(spot);
 
-  // Realistic Soft-Gradient Volumetric Headlamp Beam
   const coneGeo=new THREE.ConeGeometry(2.6,34,20,1,true);
   coneGeo.translate(0,-17,0);
-  coneGeo.rotateX(Math.PI/2);
+  coneGeo.rotateX(-Math.PI/2);
   const coneMat=new THREE.MeshBasicMaterial({
    map:beamTexture,
    color:0xfff6d6,
@@ -1578,6 +1670,9 @@ function buildPlayerVehicle(){
     const n=child.name.toLowerCase();
     if(n.includes("wheel")||n.includes("tire")){
      wheelMeshes.push(child);
+     if(n.includes("fl")||n.includes("fr")||n.includes("front")){
+      frontWheels.push(child);
+     }
     }
    }
   });
@@ -1815,29 +1910,33 @@ function createBuilding(parent,x,z,index,area){
   addBox(building,1.7,1.5,1.7,M.white,0,height+.95,0);
  }
 
- building.rotation.y=x<0?Math.PI/2:-Math.PI/2;
+ building.rotation.y=(x<getRoadCenterX(z)?Math.PI/2:-Math.PI/2)+getRoadTangentAngle(z);
  building.position.set(x,0,z);
  parent.add(building);
 }
 
 /* =========================================================
-   CHITTAGONG BILINGUAL HIGHWAY SIGNBOARDS
+   CHITTAGONG HIGHWAY SIGNBOARDS & FLYOVER GANTRIES
    ========================================================= */
 
 function createSign(loc,parent,worldMeters,chunkCenter){
  const group=new THREE.Group();
+ const worldZ=-worldMeters;
+ const roadX=getRoadCenterX(worldZ);
+ const roadAngle=getRoadTangentAngle(worldZ);
+ const deckY=getFlyoverDeckY(worldMeters);
+ const baseY=deckY>0.5?deckY:0;
 
- addBox(group,13.5,2.9,.32,M.green,0,7.4,0);
- addBox(group,13.7,.14,.36,M.gold,0,8.9,0);
- addBox(group,13.7,.14,.36,M.gold,0,5.9,0);
+ addBox(group,14.5,2.9,.32,M.green,0,baseY+7.4,0);
+ addBox(group,14.7,.14,.36,M.gold,0,baseY+8.9,0);
+ addBox(group,14.7,.14,.36,M.gold,0,baseY+5.9,0);
 
- addBox(group,.32,5.8,.32,M.black,-6.2,2.9,0);
- addBox(group,.32,5.8,.32,M.black,6.2,2.9,0);
+ addBox(group,.32,5.8,.32,M.black,-6.8,baseY+2.9,0);
+ addBox(group,.32,5.8,.32,M.black,6.8,baseY+2.9,0);
 
  const canvas=document.createElement("canvas");
  canvas.width=1280;
  canvas.height=320;
-
  const ctx=canvas.getContext("2d");
 
  ctx.fillStyle="#10472d";
@@ -1861,45 +1960,130 @@ function createSign(loc,parent,worldMeters,chunkCenter){
  texture.colorSpace=THREE.SRGBColorSpace;
 
  const face=new THREE.Mesh(
-  new THREE.PlaneGeometry(13.2,2.75),
+  new THREE.PlaneGeometry(14.2,2.75),
   new THREE.MeshBasicMaterial({map:texture})
  );
 
- face.position.set(0,7.4,.2);
+ face.position.set(0,baseY+7.4,.2);
  group.add(face);
 
- group.position.z=-worldMeters-chunkCenter;
+ group.position.set(roadX,0,worldZ-chunkCenter);
+ group.rotation.y=roadAngle;
+ parent.add(group);
+}
+
+function createFlyoverPortalSign(flyoverObj,parent,chunkCenter){
+ const group=new THREE.Group();
+ const worldMeters=flyoverObj.startM-15;
+ const worldZ=-worldMeters;
+ const roadX=getRoadCenterX(worldZ);
+ const roadAngle=getRoadTangentAngle(worldZ);
+
+ addBox(group,15.5,2.4,.3,M.black,0,7.2,0);
+ addBox(group,15.7,.14,.34,M.gold,0,8.45,0);
+ addBox(group,15.7,.14,.34,M.gold,0,5.95,0);
+ addBox(group,.34,6.0,.34,M.black,-7.4,3.0,0);
+ addBox(group,.34,6.0,.34,M.black,7.4,3.0,0);
+
+ const canvas=document.createElement("canvas");
+ canvas.width=1280;
+ canvas.height=240;
+ const ctx=canvas.getContext("2d");
+
+ ctx.fillStyle="#0e0e0e";
+ ctx.fillRect(0,0,1280,240);
+ ctx.strokeStyle="#d4af37";
+ ctx.lineWidth=10;
+ ctx.strokeRect(8,8,1264,224);
+
+ ctx.fillStyle="#f2d477";
+ ctx.font="bold 46px Arial";
+ ctx.textAlign="center";
+ ctx.fillText(flyoverObj.name,640,85);
+
+ ctx.fillStyle="#7ee0a3";
+ ctx.font="bold 38px Arial";
+ ctx.fillText("▲ CENTER LANES: FLYOVER RAMP   |   ◀ ▶ SIDE LANES: GROUND ROAD",640,168);
+
+ const tex=new THREE.CanvasTexture(canvas);
+ tex.colorSpace=THREE.SRGBColorSpace;
+ const face=new THREE.Mesh(
+  new THREE.PlaneGeometry(15.2,2.2),
+  new THREE.MeshBasicMaterial({map:tex})
+ );
+ face.position.set(0,7.2,.18);
+ group.add(face);
+
+ group.position.set(roadX,0,worldZ-chunkCenter);
+ group.rotation.y=roadAngle;
  parent.add(group);
 }
 
 /* =========================================================
-   ROAD INTERSECTIONS & CONTINUOUS DIVIDERS
+   REALISTIC 4-WAY INTERSECTIONS (CHOWRASTA)
    ========================================================= */
 
-function createIntersection(parent,z){
- addBox(parent,CONFIG.ROAD_WIDTH,.03,26,M.road,0,.02,z);
+function createRealisticIntersection(parent,worldMeters,chunkCenter){
+ const group=new THREE.Group();
+ const worldZ=-worldMeters;
+ const roadX=getRoadCenterX(worldZ);
+ const roadAngle=getRoadTangentAngle(worldZ);
 
- for(const x of [-5.8,5.8]){
-  for(let i=0;i<6;i++){
-   addBox(parent,2.4,.04,.38,M.white,x,.045,z-5.5+i*1.05);
-  }
+ addBox(group,110,.06,24,M.road,0,.02,0);
+ addBox(group,110,.26,2.2,M.sidewalk,0,.04,-13.1);
+ addBox(group,110,.26,2.2,M.sidewalk,0,.04,13.1);
+ addBox(group,42,.03,.16,M.yellow,-36,.065,0);
+ addBox(group,42,.03,.16,M.yellow,36,.065,0);
+
+ for(let i=-5;i<=5;i++){
+  addBox(group,1.1,.05,3.2,M.white,i*2.1,.06,-14.5);
+  addBox(group,1.1,.05,3.2,M.white,i*2.1,.06,14.5);
+  addBox(group,3.2,.05,1.1,M.white,-15.5,.06,i*2.0);
+  addBox(group,3.2,.05,1.1,M.white,15.5,.06,i*2.0);
  }
 
- for(const x of [-11.5,11.5]){
-  addBox(parent,.18,4.6,.18,M.black,x,2.3,z);
-  addBox(parent,.65,1.65,.52,M.black,x,4.9,z);
+ addBox(group,11,.06,.45,M.white,-6.2,.065,17.2);
+ addBox(group,11,.06,.45,M.white,6.2,.065,-17.2);
 
-  const signal=new THREE.Mesh(
-   new THREE.SphereGeometry(.16,10,10),
-   M.amber
-  );
-  signal.position.set(x,5.2,z+.32);
-  parent.add(signal);
+ const corners=[
+  [-14.2,-14.2,0],
+  [14.2,-14.2,0],
+  [-14.2,14.2,Math.PI],
+  [14.2,14.2,Math.PI]
+ ];
+ for(const [cx,cz,rot] of corners){
+  const pole=new THREE.Group();
+  addBox(pole,.26,6.2,.26,M.black,0,3.1,0);
+  addBox(pole,3.6,.18,.18,M.black,cx<0?1.7:-1.7,6.0,0);
+
+  const boxX=cx<0?2.6:-2.6;
+  addBox(pole,.55,1.55,.45,M.black,boxX,5.35,0);
+
+  const redLight=new THREE.Mesh(new THREE.SphereGeometry(.14,8,8),M.red);
+  redLight.position.set(boxX,5.82,.25);
+  const amberLight=new THREE.Mesh(new THREE.SphereGeometry(.14,8,8),M.amber);
+  amberLight.position.set(boxX,5.35,.25);
+  const greenLight=new THREE.Mesh(new THREE.SphereGeometry(.14,8,8),M.signalGreen);
+  greenLight.position.set(boxX,4.88,.25);
+
+  pole.add(redLight,amberLight,greenLight);
+  pole.position.set(cx,0,cz);
+  pole.rotation.y=rot;
+  group.add(pole);
  }
+
+ addBox(group,16,14,16,M.building1,-28,7,-26);
+ addBox(group,16,16,16,M.building2,28,8,-26);
+ addBox(group,16,12,16,M.building3,-28,6,26);
+ addBox(group,16,15,16,M.building1,28,7.5,26);
+
+ group.position.set(roadX,0,worldZ-chunkCenter);
+ group.rotation.y=roadAngle;
+ parent.add(group);
 }
 
 /* =========================================================
-   ROAD CHUNKS (CONTINUOUS LONG MAP)
+   SMOOTH CURVED ROAD CHUNKS WITH FLYOVER DECKS & RAMPS
    ========================================================= */
 
 function createRoadChunk(index){
@@ -1909,108 +2093,161 @@ function createRoadChunk(index){
  const area=getArea(index*CONFIG.CHUNK_LENGTH);
  const isWet=weather==="rain"||weather==="heavy_rain";
  const roadMat=isWet?M.wetRoad:M.road;
- const hasIntersection=(index%7===3);
+ const isStreetLit=timeOfDay==="night"||timeOfDay==="evening";
 
- addBox(
-  group,CONFIG.ROAD_WIDTH,.22,
-  CONFIG.CHUNK_LENGTH,
-  roadMat,0,-.12,0
- );
+ const sliceCount=Math.round(CONFIG.CHUNK_LENGTH/CONFIG.SLICE_LENGTH);
+
+ for(let s=0;s<sliceCount;s++){
+  const sliceStartM=index*CONFIG.CHUNK_LENGTH+s*CONFIG.SLICE_LENGTH;
+  const sliceEndM=sliceStartM+CONFIG.SLICE_LENGTH;
+  const sliceMidM=(sliceStartM+sliceEndM)*0.5;
+
+  const worldZ1=-sliceStartM;
+  const worldZ2=-sliceEndM;
+  const worldZMid=-sliceMidM;
+
+  const x1=getRoadCenterX(worldZ1);
+  const x2=getRoadCenterX(worldZ2);
+  const xMid=(x1+x2)*0.5;
+  const localZ=worldZMid-center;
+
+  const dx=x2-x1;
+  const dz=-CONFIG.SLICE_LENGTH;
+  const segLen=Math.hypot(dx,dz)+0.35;
+  const angle=Math.atan2(dx,dz);
+
+  const sliceGroup=new THREE.Group();
+  sliceGroup.position.set(xMid,0,localZ);
+  sliceGroup.rotation.y=angle;
+
+  addBox(sliceGroup,CONFIG.ROAD_WIDTH,.24,segLen,roadMat,0,-.12,0);
+
+  for(const side of [-1,1]){
+   addBox(sliceGroup,.55,.22,segLen,M.drain,side*(CONFIG.ROAD_WIDTH/2+.28),-.11,0);
+   addBox(sliceGroup,2.4,.34,segLen,M.sidewalk,side*(CONFIG.ROAD_WIDTH/2+1.75),-.05,0);
+   addBox(sliceGroup,34,.12,segLen,M.grass,side*(CONFIG.ROAD_WIDTH/2+19.5),-.22,0);
+   addBox(sliceGroup,.16,.03,segLen,M.line,side*(CONFIG.ROAD_WIDTH/2-.45),.02,0);
+  }
+
+  if(s%2===0){
+   addBox(sliceGroup,.14,.025,segLen*.65,M.line,-8.8,.018,0);
+   addBox(sliceGroup,.14,.025,segLen*.65,M.line,8.8,.018,0);
+  }
+
+  const fy1=getFlyoverDeckY(sliceStartM);
+  const fy2=getFlyoverDeckY(sliceEndM);
+  const fyMid=(fy1+fy2)*0.5;
+  const hasFlyover=fy1>0.01||fy2>0.01;
+
+  if(hasFlyover){
+   const dy=fy2-fy1;
+   const rampLen=Math.hypot(segLen,dy)+0.25;
+   const slopeAngle=Math.atan2(dy,segLen);
+
+   const deckGroup=new THREE.Group();
+   deckGroup.position.set(0,fyMid,0);
+   deckGroup.rotation.x=slopeAngle;
+
+   addBox(deckGroup,CONFIG.FLYOVER_WIDTH,.28,rampLen,M.flyoverDeck,0,-.14,0);
+   addBox(deckGroup,CONFIG.FLYOVER_WIDTH-.6,.42,rampLen,M.flyoverConcrete,0,-.46,0);
+
+   for(const side of [-1,1]){
+    addBox(deckGroup,.38,.88,rampLen,M.flyoverConcrete,side*(CONFIG.FLYOVER_WIDTH/2-.19),.42,0);
+    addBox(deckGroup,.42,.12,rampLen,M.gold,side*(CONFIG.FLYOVER_WIDTH/2-.19),.88,0);
+   }
+
+   addBox(deckGroup,.12,.03,rampLen,M.yellow,-.18,.02,0);
+   addBox(deckGroup,.12,.03,rampLen,M.yellow,.18,.02,0);
+
+   sliceGroup.add(deckGroup);
+
+   if(fyMid>2.2&&s%3===0){
+    addCylinder(sliceGroup,.72,fyMid-.4,M.flyoverPillar,0,(fyMid-.4)/2,0);
+    addBox(sliceGroup,CONFIG.FLYOVER_WIDTH-.8,.55,1.4,M.flyoverConcrete,0,fyMid-.55,0);
+   }
+
+   if(fyMid>3.5&&s%5===0){
+    for(const side of [-1,1]){
+     const px=side*(CONFIG.FLYOVER_WIDTH/2-.22);
+     addBox(sliceGroup,.14,4.4,.14,M.black,px,fyMid+2.2,0);
+     addBox(sliceGroup,1.5,.1,.1,M.black,px-side*.65,fyMid+4.4,0);
+     addBox(sliceGroup,.48,.14,.28,isStreetLit?M.lamp:M.lampOff,px-side*1.15,fyMid+4.32,0);
+    }
+   }
+  }else if(!isIntersectionAt(sliceMidM)){
+   if(area.divider){
+    addBox(
+     sliceGroup,.68,.38,segLen-.1,
+     s%2===0?M.divider:M.dividerStripe,
+     0,.18,0
+    );
+    if(s%6===2){
+     createPalm(sliceGroup,0,0,index*17+s);
+    }
+   }else{
+    addBox(sliceGroup,.12,.025,segLen,M.yellow,-.22,.02,0);
+    addBox(sliceGroup,.12,.025,segLen,M.yellow,.22,.02,0);
+   }
+  }
+
+  group.add(sliceGroup);
+
+  if(sliceMidM>350&&getFlyoverDeckY(sliceMidM)<0.1&&Math.abs((sliceMidM%1100)-5)<5){
+   createRealisticIntersection(group,sliceMidM,center);
+  }
+ }
 
  for(const side of [-1,1]){
-  addBox(
-   group,.55,.2,CONFIG.CHUNK_LENGTH,
-   M.drain,side*(CONFIG.ROAD_WIDTH/2+.28),-.11,0
-  );
-
-  addBox(
-   group,2.4,.32,CONFIG.CHUNK_LENGTH,
-   M.sidewalk,side*(CONFIG.ROAD_WIDTH/2+1.75),-.05,0
-  );
-
-  addBox(
-   group,26,.12,CONFIG.CHUNK_LENGTH,
-   M.grass,side*(CONFIG.ROAD_WIDTH/2+15.5),-.22,0
-  );
-
   for(let i=0;i<6;i++){
-   const z=-CONFIG.CHUNK_LENGTH/2+18+i*35;
-   const buildingX=side*(CONFIG.ROAD_WIDTH/2+9.5+seeded(index*5+i)*4.5);
+   const localZ=-CONFIG.CHUNK_LENGTH/2+18+i*35;
+   const worldZ=center+localZ;
+   const worldM=Math.max(0,-worldZ);
+   if(isIntersectionAt(worldM))continue;
+
+   const roadX=getRoadCenterX(worldZ);
+   const buildingX=roadX+side*(CONFIG.ROAD_WIDTH/2+10.5+seeded(index*5+i)*4.5);
 
    if(area.style==="green"){
-    if(i%2===0)createPalm(group,side*(CONFIG.ROAD_WIDTH/2+4.2),z,index*40+i);
-    else createTree(group,side*(CONFIG.ROAD_WIDTH/2+4.5),z,index*40+i);
-    if(i%3===0)createBuilding(group,buildingX+side*3,z,index*40+i,area);
+    if(i%2===0)createPalm(group,roadX+side*(CONFIG.ROAD_WIDTH/2+4.2),localZ,index*40+i);
+    else createTree(group,roadX+side*(CONFIG.ROAD_WIDTH/2+4.5),localZ,index*40+i);
+    if(i%3===0)createBuilding(group,buildingX+side*3,localZ,index*40+i,area);
    }else if(i%3===0){
-    createTree(group,side*(CONFIG.ROAD_WIDTH/2+3.6),z,index*40+i);
+    createTree(group,roadX+side*(CONFIG.ROAD_WIDTH/2+3.6),localZ,index*40+i);
    }else{
-    createBuilding(group,buildingX,z,index*40+i,area);
+    createBuilding(group,buildingX,localZ,index*40+i,area);
    }
   }
  }
 
- if(area.divider){
-  const segCount=11;
-  const segLen=CONFIG.CHUNK_LENGTH/segCount;
-  for(let i=0;i<segCount;i++){
-   const segZ=-CONFIG.CHUNK_LENGTH/2+segLen/2+i*segLen;
-   if(hasIntersection&&Math.abs(segZ)<16)continue;
-
-   addBox(
-    group,.68,.38,segLen-.15,
-    i%2===0?M.divider:M.dividerStripe,
-    0,.18,segZ
-   );
-   if(i%3===1){
-    createPalm(group,0,segZ,index*17+i);
-   }
-  }
- }else{
-  for(const x of [-.22,.22]){
-   addBox(group,.12,.025,CONFIG.CHUNK_LENGTH,M.yellow,x,.02,0);
-  }
- }
-
- for(const laneX of [-5.2,5.2]){
-  for(let i=0;i<22;i++){
-   addBox(
-    group,.14,.025,4.8,M.line,
-    laneX,.015,-CONFIG.CHUNK_LENGTH/2+5+i*10
-   );
-  }
- }
-
- for(const side of [-1,1]){
-  addBox(
-   group,.16,.03,CONFIG.CHUNK_LENGTH,
-   M.line,side*(CONFIG.ROAD_WIDTH/2-.45),.02,0
-  );
- }
-
- const isStreetLit=timeOfDay==="night"||timeOfDay==="evening";
  for(let i=0;i<4;i++){
-  const z=-CONFIG.CHUNK_LENGTH/2+26+i*52;
+  const localZ=-CONFIG.CHUNK_LENGTH/2+26+i*52;
+  const worldZ=center+localZ;
+  const worldM=Math.max(0,-worldZ);
+  if(isIntersectionAt(worldM))continue;
+
+  const roadX=getRoadCenterX(worldZ);
+  const roadAngle=getRoadTangentAngle(worldZ);
+  const lampGroup=new THREE.Group();
+  lampGroup.position.set(roadX,0,localZ);
+  lampGroup.rotation.y=roadAngle;
+
   for(const side of [-1,1]){
    const lx=side*(CONFIG.ROAD_WIDTH/2+1.2);
-   addBox(group,.18,5.6,.18,M.black,lx,2.8,z);
-   addBox(group,2.1,.12,.12,M.black,lx-side*.9,5.6,z);
-   addBox(group,.58,.18,.34,isStreetLit?M.lamp:M.lampOff,lx-side*1.55,5.5,z);
+   addBox(lampGroup,.18,5.6,.18,M.black,lx,2.8,0);
+   addBox(lampGroup,2.1,.12,.12,M.black,lx-side*.9,5.6,0);
+   addBox(lampGroup,.58,.18,.34,isStreetLit?M.lamp:M.lampOff,lx-side*1.55,5.5,0);
 
-   // Glowing Ground Light Pool on Asphalt
    const pool=new THREE.Mesh(
     new THREE.PlaneGeometry(11.5,14),
     M.streetPool
    );
    pool.rotation.x=-Math.PI/2;
-   pool.position.set(lx-side*4.2,0.035,z);
+   pool.position.set(lx-side*4.2,0.035,0);
    pool.visible=isStreetLit;
-   group.add(pool);
+   lampGroup.add(pool);
    streetLightPools.push(pool);
   }
- }
-
- if(hasIntersection){
-  createIntersection(group,0);
+  group.add(lampGroup);
  }
 
  const start=index*CONFIG.CHUNK_LENGTH;
@@ -2020,6 +2257,12 @@ function createRoadChunk(index){
   const meters=loc.km*1000;
   if(loc.km>0&&meters>=start&&meters<end){
    createSign(loc,group,meters,center);
+  }
+ }
+
+ for(const f of flyovers){
+  if(f.startM>=start&&f.startM<end){
+   createFlyoverPortalSign(f,group,center);
   }
  }
 
@@ -2046,10 +2289,10 @@ function updateWorld(){
 }
 
 /* =========================================================
-   ADVANCED BANGLADESH TRAFFIC AI & LANE SWITCHING
+   ADVANCED BANGLADESH TRAFFIC AI
    ========================================================= */
 
-function createTrafficVehicle(type,x,z,direction=1){
+function createTrafficVehicle(type,laneOffset,z,direction=1,useFlyover=false){
  const group=new THREE.Group();
 
  let w=1.9,h=.85,l=3.9;
@@ -2111,14 +2354,12 @@ function createTrafficVehicle(type,x,z,direction=1){
   group.add(wheel);
  }
 
- // Bright glowing taillights & headlights visible in night mode
  const lightSides=type==="BIKE"?[0]:[-1,1];
  for(const side of lightSides){
   addBox(group,type==="BIKE"?.2:.32,.22,.09,M.trafficTail,side*w*.34,h*.62,l/2+.05);
   addBox(group,type==="BIKE"?.2:.32,.22,.09,M.trafficHead,side*w*.34,h*.62,-l/2-.05);
  }
 
- // Subtle road reflection strip under traffic vehicles so they stand out in dark
  const underGlow=new THREE.Mesh(
   new THREE.PlaneGeometry(w*1.15,l*1.15),
   new THREE.MeshBasicMaterial({
@@ -2138,8 +2379,13 @@ function createTrafficVehicle(type,x,z,direction=1){
  indicatorLeft.visible=false;
  indicatorRight.visible=false;
 
- group.rotation.y=direction===1?0:Math.PI;
- group.position.set(x,0,z);
+ const roadX=getRoadCenterX(z);
+ const worldX=roadX+laneOffset;
+ const m=Math.max(0,-z);
+ const y=useFlyover?getFlyoverDeckY(m):0;
+
+ group.rotation.y=(direction===1?0:Math.PI)+getRoadTangentAngle(z);
+ group.position.set(worldX,y,z);
  scene.add(group);
 
  const baseSpeed=
@@ -2151,24 +2397,32 @@ function createTrafficVehicle(type,x,z,direction=1){
   10.0+Math.random()*12.0;
 
  return{
-  group,type,x,z,direction,
+  group,type,
+  laneOffset,
+  targetLaneOffset:laneOffset,
+  x:worldX,y,z,
+  direction,
+  useFlyover,
   speed:baseSpeed,
   baseSpeed,width:w,length:l,
-  targetX:x,
   overtakeTimer:Math.random()*8,
   indicatorLeft,
   indicatorRight
  };
 }
 
-function getTrafficLanes(direction){
- return direction===-1?[-3.2,-7.0]:[3.2,7.0];
+function getTrafficLanes(direction,useFlyover=false){
+ if(useFlyover){
+  return direction===-1?[-2.5]:[2.5];
+ }
+ return direction===-1?[-6.8,-10.2]:[6.8,10.2];
 }
 
-function isSpawnClear(x,z,minDist=24){
- if(Math.hypot(player.position.x-x,player.position.z-z)<minDist+15)return false;
+function isSpawnClear(laneOffset,z,minDist=24){
+ const worldX=getRoadCenterX(z)+laneOffset;
+ if(Math.hypot(player.position.x-worldX,player.position.z-z)<minDist+15)return false;
  for(const other of traffic){
-  if(Math.abs(other.x-x)<2.6&&Math.abs(other.z-z)<minDist)return false;
+  if(Math.abs(other.laneOffset-laneOffset)<2.6&&Math.abs(other.z-z)<minDist)return false;
  }
  return true;
 }
@@ -2178,13 +2432,14 @@ function createTraffic(){
 
  for(let i=0;i<CONFIG.TRAFFIC_COUNT;i++){
   const type=trafficTypes[Math.floor(Math.random()*trafficTypes.length)];
-  const direction=Math.random()>.45?-1:1;
-  const lanes=getTrafficLanes(direction);
+  const direction=Math.random()>.42?-1:1;
+  const useFlyover=(i%4===0)&&type!=="RICKSHAW"&&type!=="BUS";
+  const lanes=getTrafficLanes(direction,useFlyover);
   const lane=lanes[Math.floor(Math.random()*lanes.length)];
-  const z=player.position.z-80-i*58-Math.random()*30;
+  const z=player.position.z-80-i*55-Math.random()*30;
 
   if(isSpawnClear(lane,z,20)){
-   traffic.push(createTrafficVehicle(type,lane,z,direction));
+   traffic.push(createTrafficVehicle(type,lane,z,direction,useFlyover));
   }
  }
 }
@@ -2196,7 +2451,7 @@ function clearTraffic(){
 
 function updateTraffic(dt){
  const area=getArea(distance);
- const activeLimit=Math.max(10,Math.round(CONFIG.TRAFFIC_COUNT*(area.density||0.85)));
+ const activeLimit=Math.max(12,Math.round(CONFIG.TRAFFIC_COUNT*(area.density||0.85)));
 
  for(let idx=0;idx<traffic.length;idx++){
   const car=traffic[idx];
@@ -2207,31 +2462,30 @@ function updateTraffic(dt){
   car.group.visible=true;
 
   let target=car.baseSpeed;
-  let blockedAhead=false;
 
   for(const other of traffic){
    if(other===car||!other.group.visible)continue;
+   if(other.useFlyover!==car.useFlyover)continue;
 
-   if(other.direction===car.direction&&Math.abs(other.x-car.x)<2.2){
+   if(other.direction===car.direction&&Math.abs(other.laneOffset-car.laneOffset)<2.2){
     const aheadDist=(car.z-other.z)*(-car.direction);
     if(aheadDist>0&&aheadDist<18){
      target=Math.min(target,other.speed*0.8);
-     blockedAhead=true;
     }
    }
   }
 
   const playerRelZ=(car.z-player.position.z)*(-car.direction);
-  if(playerRelZ>0&&playerRelZ<20&&Math.abs(player.position.x-car.x)<2.4){
+  if(car.useFlyover===onFlyover&&playerRelZ>0&&playerRelZ<20&&Math.abs(roadOffset-car.laneOffset)<2.4){
    target=Math.min(target,Math.max(0,Math.abs(speed)/3.6*0.75));
   }
 
   car.overtakeTimer-=dt;
-  const isSwitching=Math.abs(car.x-car.targetX)>0.1;
+  const isSwitching=Math.abs(car.laneOffset-car.targetLaneOffset)>0.1;
 
   if(isSwitching){
    const blinkOn=Math.floor(performance.now()/250)%2===0;
-   if(car.targetX>car.x){
+   if(car.targetLaneOffset>car.laneOffset){
     car.indicatorRight.visible=blinkOn;
     car.indicatorLeft.visible=false;
    }else{
@@ -2243,11 +2497,11 @@ function updateTraffic(dt){
    car.indicatorRight.visible=false;
   }
 
-  if(car.overtakeTimer<=0&&car.type!=="RICKSHAW"&&car.type!=="BUS"){
-   const lanes=getTrafficLanes(car.direction);
-   const altLane=lanes.find(l=>Math.abs(l-car.targetX)>1.5);
+  if(car.overtakeTimer<=0&&car.type!=="RICKSHAW"&&car.type!=="BUS"&&!car.useFlyover){
+   const lanes=getTrafficLanes(car.direction,false);
+   const altLane=lanes.find(l=>Math.abs(l-car.targetLaneOffset)>1.5);
    if(altLane!==undefined&&isSpawnClear(altLane,car.z,22)){
-    car.targetX=altLane;
+    car.targetLaneOffset=altLane;
     car.overtakeTimer=8+Math.random()*7;
    }else{
     car.overtakeTimer=4+Math.random()*4;
@@ -2256,47 +2510,57 @@ function updateTraffic(dt){
 
   car.speed=THREE.MathUtils.lerp(car.speed,target,Math.min(1,dt*2.4));
   car.z+=car.speed*dt*car.direction;
-  car.x=THREE.MathUtils.lerp(car.x,car.targetX,Math.min(1,dt*2.2));
+  car.laneOffset=THREE.MathUtils.lerp(car.laneOffset,car.targetLaneOffset,Math.min(1,dt*2.2));
 
   if(car.z>player.position.z+110||car.z<player.position.z-1650){
-   const lanes=getTrafficLanes(car.direction);
+   const lanes=getTrafficLanes(car.direction,car.useFlyover);
    const newLane=lanes[Math.floor(Math.random()*lanes.length)];
    const newZ=player.position.z-650-Math.random()*950;
    if(isSpawnClear(newLane,newZ,26)){
     car.z=newZ;
-    car.x=newLane;
-    car.targetX=newLane;
+    car.laneOffset=newLane;
+    car.targetLaneOffset=newLane;
     car.speed=car.baseSpeed;
    }
   }
 
-  car.group.position.set(car.x,0,car.z);
+  const carRoadX=getRoadCenterX(car.z);
+  const carRoadAngle=getRoadTangentAngle(car.z);
+  const carMeters=Math.max(0,-car.z);
+  car.x=carRoadX+car.laneOffset;
+  car.y=car.useFlyover?getFlyoverDeckY(carMeters):0;
 
-  const dx=player.position.x-car.x;
-  const dz=player.position.z-car.z;
-  const minX=car.width/2+1.08;
-  const minZ=car.length/2+2.25;
+  car.group.position.set(car.x,car.y,car.z);
+  car.group.rotation.y=(car.direction===1?0:Math.PI)+carRoadAngle;
+  car.group.rotation.x=car.useFlyover?getFlyoverSlope(carMeters)*(car.direction===-1?1:-1):0;
 
-  if(Math.abs(dx)<minX&&Math.abs(dz)<minZ){
-   const overlapX=minX-Math.abs(dx);
-   const overlapZ=minZ-Math.abs(dz);
-   if(overlapX<overlapZ){
-    player.position.x+=(dx>=0?1:-1)*overlapX;
-    velocityX=(dx>=0?1:-1)*4.5;
-   }else{
-    player.position.z+=(dz>=0?1:-1)*overlapZ;
-   }
+  if(Math.abs(playerY-car.y)<2.2){
+   const dx=player.position.x-car.x;
+   const dz=player.position.z-car.z;
+   const minX=car.width/2+1.08;
+   const minZ=car.length/2+2.25;
 
-   const relSpeed=Math.abs(speed-car.speed*3.6*(-car.direction));
-   if(relSpeed>10&&performance.now()-lastCollision>750){
-    handleCollision(relSpeed,car.x,car.z);
+   if(Math.abs(dx)<minX&&Math.abs(dz)<minZ){
+    const overlapX=minX-Math.abs(dx);
+    const overlapZ=minZ-Math.abs(dz);
+    if(overlapX<overlapZ){
+     roadOffset+=(dx>=0?1:-1)*overlapX;
+     velocityX=(dx>=0?1:-1)*4.5;
+    }else{
+     player.position.z+=(dz>=0?1:-1)*overlapZ;
+    }
+
+    const relSpeed=Math.abs(speed-car.speed*3.6*(-car.direction));
+    if(relSpeed>10&&performance.now()-lastCollision>750){
+     handleCollision(relSpeed,car.x,car.z);
+    }
    }
   }
  }
 }
 
 /* =========================================================
-   HORN REACTION (CLEAR TRAFFIC)
+   HORN REACTION
    ========================================================= */
 
 function triggerHornReaction(){
@@ -2311,19 +2575,19 @@ function triggerHornReaction(){
 
  for(const car of traffic){
   const distZ=car.z-player.position.z;
-  if(distZ<0&&distZ>-38&&Math.abs(car.x-player.position.x)<3.5){
+  if(car.useFlyover===onFlyover&&distZ<0&&distZ>-38&&Math.abs(car.laneOffset-roadOffset)<3.5){
    car.speed=Math.max(car.speed,18);
-   const lanes=getTrafficLanes(car.direction);
-   const freeLane=lanes.find(l=>Math.abs(l-car.targetX)>1.5);
+   const lanes=getTrafficLanes(car.direction,car.useFlyover);
+   const freeLane=lanes.find(l=>Math.abs(l-car.targetLaneOffset)>1.5);
    if(freeLane!==undefined){
-    car.targetX=freeLane;
+    car.targetLaneOffset=freeLane;
    }
   }
  }
 }
 
 /* =========================================================
-   ADVANCED COLLISION, PARTICLE SPARKS & IMPACT FEEDBACK
+   PARTICLES & IMPACTS
    ========================================================= */
 
 function spawnImpactParticles(x,z,count=18,isSpark=true){
@@ -2332,7 +2596,7 @@ function spawnImpactParticles(x,z,count=18,isSpark=true){
   const mesh=new THREE.Mesh(boxGeo,mat);
   const s=isSpark?0.12:0.18;
   mesh.scale.set(s,s,s);
-  mesh.position.set(x+(Math.random()-.5)*1.2,0.8+Math.random()*0.7,z+(Math.random()-.5)*1.2);
+  mesh.position.set(x+(Math.random()-.5)*1.2,playerY+0.8+Math.random()*0.7,z+(Math.random()-.5)*1.2);
   scene.add(mesh);
 
   particles.push({
@@ -2356,7 +2620,7 @@ function updateParticles(dt){
   }
   p.vy-=22*dt;
   p.mesh.position.x+=p.vx*dt;
-  p.mesh.position.y=Math.max(0.05,p.mesh.position.y+p.vy*dt);
+  p.mesh.position.y=Math.max(playerY+0.05,p.mesh.position.y+p.vy*dt);
   p.mesh.position.z+=p.vz*dt;
   p.mesh.scale.multiplyScalar(0.95);
  }
@@ -2470,7 +2734,7 @@ function applyEnvironment(autoLights=false){
 }
 
 /* =========================================================
-   RAIN PARTICLE SYSTEM & SCREEN SPLASH DROPS
+   RAIN SYSTEM
    ========================================================= */
 
 function createRain(){
@@ -2546,7 +2810,7 @@ function updateRain(dt){
  }
 
  attr.needsUpdate=true;
- rainPoints.position.set(player.position.x,0,player.position.z);
+ rainPoints.position.set(player.position.x,playerY,player.position.z);
 
  const rainCanvas=$("rainOverlay");
  if(rainCanvas.width!==innerWidth||rainCanvas.height!==innerHeight){
@@ -2582,7 +2846,7 @@ function updateRain(dt){
 }
 
 /* =========================================================
-   CAMERA SYSTEM WITH NITRO FOV KICK & SHAKE
+   CAMERA SYSTEM
    ========================================================= */
 
 const cameraTarget=new THREE.Vector3();
@@ -2595,15 +2859,43 @@ function updateCamera(dt){
  camera.fov=THREE.MathUtils.lerp(camera.fov,targetFov,Math.min(1,dt*4));
  camera.updateProjectionMatrix();
 
+ const roadAngle=getRoadTangentAngle(player.position.z);
+ const sinA=Math.sin(roadAngle);
+ const cosA=Math.cos(roadAngle);
+
  if(cameraMode===0){
-  cameraPosition.set(player.position.x,2.05,player.position.z-.15);
-  cameraTarget.set(player.position.x,1.8,player.position.z-22);
+  cameraPosition.set(
+   player.position.x-sinA*0.15,
+   playerY+2.05,
+   player.position.z-cosA*0.15
+  );
+  cameraTarget.set(
+   player.position.x-sinA*24,
+   playerY+1.8,
+   player.position.z-cosA*24
+  );
  }else if(cameraMode===1){
-  cameraPosition.set(player.position.x,3.8,player.position.z+9.5);
-  cameraTarget.set(player.position.x,1.1,player.position.z-14);
+  cameraPosition.set(
+   player.position.x+sinA*9.5,
+   playerY+3.8,
+   player.position.z+cosA*9.5
+  );
+  cameraTarget.set(
+   player.position.x-sinA*14,
+   playerY+1.1,
+   player.position.z-cosA*14
+  );
  }else{
-  cameraPosition.set(player.position.x,6.8,player.position.z+14.8);
-  cameraTarget.set(player.position.x,1.0,player.position.z-12);
+  cameraPosition.set(
+   player.position.x+sinA*14.8,
+   playerY+6.8,
+   player.position.z+cosA*14.8
+  );
+  cameraTarget.set(
+   player.position.x-sinA*12,
+   playerY+1.0,
+   player.position.z-cosA*12
+  );
  }
 
  if(nitroActive){
@@ -2617,13 +2909,13 @@ function updateCamera(dt){
   cameraShake=Math.max(0,cameraShake-dt*2.4);
  }
 
- const smooth=1-Math.pow(.0008,dt);
+ const smooth=1-Math.pow(.0006,dt);
  camera.position.lerp(cameraPosition,smooth);
  camera.lookAt(cameraTarget);
 }
 
 /* =========================================================
-   REALISTIC AUDIO SYSTEM
+   AUDIO SYSTEM
    ========================================================= */
 
 let audioContext=null;
@@ -2842,7 +3134,7 @@ function playTickSound(high=true){
 }
 
 /* =========================================================
-   REALISTIC VEHICLE PHYSICS & NITRO BOOST SYSTEM
+   PLAYER VEHICLE PHYSICS (CORRECT FORWARD/REVERSE & RAMP)
    ========================================================= */
 
 function updatePlayer(dt){
@@ -2898,54 +3190,92 @@ function updatePlayer(dt){
  }
 
  const ms=speed/3.6;
- const direction=gear==="R"?-1:1;
+ const stepDist=ms*dt;
 
- distance+=Math.max(0,ms*dt*direction);
+ distance=Math.max(0,distance+stepDist);
  totalDistance+=Math.abs(ms*dt);
-
- player.position.z-=ms*dt*direction;
+ player.position.z=-distance;
 
  smoothSteer=THREE.MathUtils.lerp(smoothSteer,steering,1-Math.pow(0.002,dt));
- const speedFactor=.32+Math.min(Math.abs(speed)/85,1);
+ const speedFactor=.34+Math.min(Math.abs(speed)/85,1);
  const steerSensitivity=(vehicle.handling||1.0)*gripFactor;
 
  const targetVx=smoothSteer*CONFIG.MAX_STEER*speedFactor*steerSensitivity*(speed<0?-1:1);
  velocityX=THREE.MathUtils.lerp(velocityX,targetVx,1-Math.pow(0.015,dt));
- player.position.x+=velocityX*dt;
+ roadOffset+=velocityX*dt;
 
- if(area.divider&&Math.abs(player.position.x)<1.35){
-  player.position.x=player.position.x>=0?1.35:-1.35;
+ const deckY=getFlyoverDeckY(distance);
+ const flyHalfW=CONFIG.FLYOVER_WIDTH/2-1.15;
+
+ if(deckY<=0.28){
+  const wasOnFlyover=onFlyover;
+  onFlyover=deckY>0.04&&Math.abs(roadOffset)<flyHalfW;
+  if(onFlyover&&!wasOnFlyover&&speed>5){
+   showToast("ASCENDING FLYOVER RAMP ▲");
+  }
+  playerY=onFlyover?deckY:0;
+ }else{
+  if(onFlyover){
+   playerY=deckY;
+   if(roadOffset>flyHalfW){
+    roadOffset=flyHalfW;
+    velocityX=0;
+    speed*=.97;
+   }else if(roadOffset<-flyHalfW){
+    roadOffset=-flyHalfW;
+    velocityX=0;
+    speed*=.97;
+   }
+  }else{
+   playerY=0;
+   if(Math.abs(roadOffset)<1.35){
+    roadOffset=roadOffset>=0?1.35:-1.35;
+    velocityX=0;
+   }
+  }
+ }
+
+ if(deckY<=0.02&&area.divider&&!isIntersectionAt(distance)&&Math.abs(roadOffset)<1.25){
+  roadOffset=roadOffset>=0?1.25:-1.25;
   velocityX=0;
   if(Math.abs(speed)>15&&performance.now()-lastCollision>800){
-   handleCollision(Math.abs(speed)*0.65,0,player.position.z);
+   handleCollision(Math.abs(speed)*0.65,getRoadCenterX(player.position.z),player.position.z);
   }
  }
 
  const roadLimit=CONFIG.ROAD_WIDTH/2-1.35;
- if(player.position.x>roadLimit){
-  player.position.x=roadLimit;
+ if(roadOffset>roadLimit){
+  roadOffset=roadLimit;
   velocityX=0;
   speed*=.96;
  }
- if(player.position.x<-roadLimit){
-  player.position.x=-roadLimit;
+ if(roadOffset<-roadLimit){
+  roadOffset=-roadLimit;
   velocityX=0;
   speed*=.96;
  }
 
- const targetRotation=-smoothSteer*.16;
+ const roadCenterX=getRoadCenterX(player.position.z);
+ const roadTangent=getRoadTangentAngle(player.position.z);
+ const rampSlope=onFlyover?getFlyoverSlope(distance):0;
+
+ player.position.x=roadCenterX+roadOffset;
+ player.position.y=playerY;
+
+ const targetRotation=roadTangent-smoothSteer*.18;
  player.rotation.y=THREE.MathUtils.lerp(
-  player.rotation.y,targetRotation,1-Math.pow(.01,dt)
+  player.rotation.y,targetRotation,1-Math.pow(.008,dt)
  );
 
  vehicleBody.rotation.z=THREE.MathUtils.lerp(
-  vehicleBody.rotation.z,-smoothSteer*.042,1-Math.pow(.03,dt)
+  vehicleBody.rotation.z,-smoothSteer*.045,1-Math.pow(.03,dt)
  );
 
- const pitchTarget=(braking||handbrake)?0.024:(accelerator&&speed>5?-0.016:0);
+ const accelPitch=(braking||handbrake)?0.024:(accelerator&&speed>5?-0.016:0);
+ const targetPitch=rampSlope+accelPitch;
  suspensionPhase+=Math.abs(ms)*dt*2.4;
  const roadRipple=Math.sin(suspensionPhase)*0.012*Math.min(Math.abs(speed)/80,1);
- vehicleBody.rotation.x=THREE.MathUtils.lerp(vehicleBody.rotation.x,pitchTarget,1-Math.pow(0.02,dt));
+ vehicleBody.rotation.x=THREE.MathUtils.lerp(vehicleBody.rotation.x,targetPitch,1-Math.pow(0.02,dt));
  vehicleBody.position.y=roadRipple;
 
  for(const wheel of wheelMeshes){
@@ -2983,18 +3313,18 @@ function updateStats(){
 }
 
 /* =========================================================
-   MISSION & LOCATION HUD TRACKING
+   MISSIONS & LOCATIONS
    ========================================================= */
 
 function startMission(index){
  activeMissionIndex=clampInt(index,0,missions.length-1);
- const m=missions[activeMissionIndex];
  missionState={
   startDist:distance,
   elapsed:0,
   crashes:0,
   speedSamples:0,
   speedSum:0,
+  flyoverDist:0,
   finished:false
  };
  saveGame();
@@ -3008,9 +3338,13 @@ function updateMissionProgress(dt){
  if(Math.abs(speed)>2){
   missionState.speedSamples++;
   missionState.speedSum+=Math.abs(speed);
+  if(onFlyover){
+   missionState.flyoverDist+=(Math.abs(speed)/3.6)*dt;
+  }
  }
 
  const drivenKm=(distance-missionState.startDist)/1000;
+ const flyKm=missionState.flyoverDist/1000;
 
  if(m.timeLimit>0&&missionState.elapsed>m.timeLimit){
   missionState.finished=true;
@@ -3031,6 +3365,8 @@ function updateMissionProgress(dt){
  if(m.type==="timed_distance"){
   const leftTime=Math.max(0,Math.ceil(m.timeLimit-missionState.elapsed));
   $("missionBox").textContent=`${m.title}: ${drivenKm.toFixed(1)}/${m.targetKm} KM • ${leftTime}S`;
+ }else if(m.type==="flyover_distance"){
+  $("missionBox").textContent=`FLYOVER: ${flyKm.toFixed(2)}/${m.minFlyoverKm} KM • TOTAL: ${drivenKm.toFixed(1)}/${m.targetKm} KM`;
  }else{
   $("missionBox").textContent=`${m.title}: ${drivenKm.toFixed(1)}/${m.targetKm} KM`;
  }
@@ -3040,6 +3376,11 @@ function updateMissionProgress(dt){
   if(m.type==="speed_distance"&&avgSpd<m.minAvgSpeed){
    missionState.finished=true;
    triggerGameOver("SPEED TARGET MISSED",`Average speed was ${Math.round(avgSpd)} KM/H (Required: ${m.minAvgSpeed} KM/H).`);
+   return;
+  }
+  if(m.type==="flyover_distance"&&flyKm<m.minFlyoverKm){
+   missionState.finished=true;
+   triggerGameOver("FLYOVER OBJECTIVE MISSED",`Drive onto the center flyover ramp for at least ${m.minFlyoverKm} KM.`);
    return;
   }
 
@@ -3066,11 +3407,15 @@ function updateLocation(){
  }
 
  const next=getNextLocation(distance);
- $("distanceBox").textContent="DISTANCE: "+(distance/1000).toFixed(2)+" KM";
+ const levelTag=onFlyover?"FLYOVER ▲":"GROUND";
+ $("distanceBox").textContent=`DISTANCE: ${(distance/1000).toFixed(2)} KM • ${levelTag}`;
 
  const m=missions[activeMissionIndex];
  if(!m||m.type==="free"){
-  if(next){
+  const fZone=getFlyoverZone(distance);
+  if(fZone&&!onFlyover&&distance<fZone.startM+CONFIG.FLYOVER_RAMP_LEN){
+   $("missionBox").textContent=`FLYOVER AHEAD: CENTER = OVER | SIDE = UNDER`;
+  }else if(next){
    const remaining=(next.km*1000-distance)/1000;
    $("missionBox").textContent="NEXT: "+next.name+" • "+remaining.toFixed(1)+" KM";
   }else{
@@ -3091,27 +3436,58 @@ function drawMap(){
  ctx.fillStyle="#0d120f";
  ctx.fillRect(0,0,180,180);
 
+ const baseRoadX=getRoadCenterX(player.position.z);
+
  ctx.strokeStyle="#6e6e60";
- ctx.lineWidth=26;
+ ctx.lineWidth=28;
+ ctx.lineCap="round";
  ctx.beginPath();
- ctx.moveTo(90,180);
- ctx.lineTo(90,0);
+ for(let dz=90;dz>=-110;dz-=10){
+  const wz=player.position.z+dz;
+  const rx=getRoadCenterX(wz)-baseRoadX;
+  const sx=90+rx*1.4;
+  const sy=90+dz*0.8;
+  if(dz===90)ctx.moveTo(sx,sy);
+  else ctx.lineTo(sx,sy);
+ }
  ctx.stroke();
+
+ const fZone=getFlyoverZone(distance);
+ if(fZone){
+  ctx.strokeStyle="#00f0ff";
+  ctx.lineWidth=11;
+  ctx.beginPath();
+  for(let dz=90;dz>=-110;dz-=10){
+   const wz=player.position.z+dz;
+   const wm=Math.max(0,-wz);
+   if(getFlyoverDeckY(wm)>0.1){
+    const rx=getRoadCenterX(wz)-baseRoadX;
+    ctx.lineTo(90+rx*1.4,90+dz*0.8);
+   }
+  }
+  ctx.stroke();
+ }
 
  ctx.strokeStyle="#d4af37";
  ctx.lineWidth=2;
  ctx.setLineDash([8,7]);
  ctx.beginPath();
- ctx.moveTo(90,180);
- ctx.lineTo(90,0);
+ for(let dz=90;dz>=-110;dz-=10){
+  const wz=player.position.z+dz;
+  const rx=getRoadCenterX(wz)-baseRoadX;
+  const sx=90+rx*1.4;
+  const sy=90+dz*0.8;
+  if(dz===90)ctx.moveTo(sx,sy);
+  else ctx.lineTo(sx,sy);
+ }
  ctx.stroke();
  ctx.setLineDash([]);
 
  ctx.save();
- ctx.translate(90,90);
+ ctx.translate(90+roadOffset*1.4,90);
  ctx.rotate(-player.rotation.y);
 
- ctx.fillStyle="#f2d477";
+ ctx.fillStyle=onFlyover?"#00f0ff":"#f2d477";
  ctx.beginPath();
  ctx.moveTo(0,-12);
  ctx.lineTo(-8,9);
@@ -3128,12 +3504,12 @@ function drawMap(){
  for(const car of traffic){
   if(!car.group.visible)continue;
   const dz=car.z-player.position.z;
-  if(Math.abs(dz)>80)continue;
+  if(Math.abs(dz)>95)continue;
 
-  const dx=car.x-player.position.x;
-  ctx.fillStyle=car.direction===1?"#ff6b6b":"#7ee0a3";
+  const rx=getRoadCenterX(car.z)-baseRoadX+car.laneOffset;
+  ctx.fillStyle=car.useFlyover?"#00f0ff":(car.direction===1?"#ff6b6b":"#7ee0a3");
   ctx.beginPath();
-  ctx.arc(90+dx*4.5,90+dz*.8,3,0,Math.PI*2);
+  ctx.arc(90+rx*1.4,90+dz*.8,3,0,Math.PI*2);
   ctx.fill();
  }
 }
@@ -3164,7 +3540,7 @@ function applyGraphics(){
 }
 
 /* =========================================================
-   GAME STATE, RESULTS & OVERLAYS
+   GAME STATE & OVERLAYS
    ========================================================= */
 
 function resetControls(){
@@ -3310,12 +3686,15 @@ function returnHome(){
 function restartGame(){
  distance=0;
  speed=0;
+ roadOffset=-6.8;
+ playerY=0;
+ onFlyover=false;
  velocityX=0;
  fuel=100;
  nitro=100;
  damage=0;
 
- player.position.set(-3.2,0,0);
+ player.position.set(getRoadCenterX(0)+roadOffset,0,0);
  player.rotation.set(0,0,0);
  lastLocation=-1;
 
@@ -3338,7 +3717,7 @@ function restartGame(){
 }
 
 /* =========================================================
-   CHARACTER, VEHICLE & MISSION UI RENDERERS
+   UI RENDERERS
    ========================================================= */
 
 function renderCharacters(){
@@ -3436,6 +3815,14 @@ function renderMissions(){
   `;
 
   card.querySelector("button").addEventListener("click",()=>{
+   if(m.type==="flyover_distance"&&distance>320){
+    distance=0;
+    roadOffset=0;
+    player.position.set(0,0,0);
+    for(const group of chunks.values())disposeGroup(group);
+    chunks.clear();
+    updateWorld();
+   }
    startMission(index);
    renderMissions();
    startGame();
@@ -3817,14 +4204,21 @@ $("refuelBtn").addEventListener("click",()=>{
 });
 
 /* =========================================================
-   WORLD INITIALIZATION & MAIN LOOP
+   INITIALIZATION & MAIN LOOP
    ========================================================= */
 
 function initializeWorld(){
  if(initialized)return;
  initialized=true;
 
- player.position.set(-3.2,0,-distance);
+ roadOffset=-6.8;
+ const startZ=-distance;
+ const startRoadX=getRoadCenterX(startZ);
+ const deckY=getFlyoverDeckY(distance);
+ onFlyover=deckY>0.1&&Math.abs(roadOffset)<(CONFIG.FLYOVER_WIDTH/2-1.15);
+ playerY=onFlyover?deckY:0;
+
+ player.position.set(startRoadX+roadOffset,playerY,startZ);
 
  buildPlayerVehicle();
  updateCharacter();
@@ -3836,8 +4230,8 @@ function initializeWorld(){
  createRain();
  applyGraphics();
 
- camera.position.set(-3.2,6.8,14.8);
- camera.lookAt(-3.2,1,-10);
+ camera.position.set(player.position.x,playerY+6.8,player.position.z+14.8);
+ camera.lookAt(player.position.x,playerY+1,player.position.z-10);
 
  updateLocation();
  drawMap();
@@ -3892,7 +4286,7 @@ function animate(time){
 }
 
 /* =========================================================
-   RESIZE, LIFECYCLE & INITIAL LOAD
+   RESIZE & LOAD
    ========================================================= */
 
 function resizeGame(){
