@@ -894,8 +894,8 @@ const missions=[
   id:"agrabad_vip",
   title:"AGRABAD VIP PASSENGER",
   difficulty:"MEDIUM",
-  desc:"Transport an executive passenger for 8.0 KM without any major collision.",
-  type:"no_crash_distance",targetKm:8.0,maxCrashes:1,reward:6000
+  desc:"Transport an executive passenger for 8.0 KM without major collisions.",
+  type:"no_crash_distance",targetKm:8.0,maxCrashes:2,reward:6000
  },
  {
   id:"highway_cruise",
@@ -1009,7 +1009,7 @@ let paused=false;
 let initialized=false;
 
 let speed=0;
-let roadOffset= -6.8;
+let roadOffset=-6.8;
 let playerY=0;
 let onFlyover=false;
 let velocityX=0;
@@ -1134,7 +1134,7 @@ function loadSave(){
 function saveGame(){
  try{
   localStorage.setItem(CONFIG.SAVE_KEY,JSON.stringify({
-   version:10,
+   version:11,
    character:selectedCharacter,
    vehicle:selectedVehicle,
    activeMission:activeMissionIndex,
@@ -1178,7 +1178,7 @@ const renderer=new THREE.WebGLRenderer({
 
 renderer.outputColorSpace=THREE.SRGBColorSpace;
 renderer.toneMapping=THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure=1.02;
+renderer.toneMappingExposure=1.0;
 
 renderer.shadowMap.enabled=true;
 renderer.shadowMap.type=THREE.PCFSoftShadowMap;
@@ -1192,10 +1192,10 @@ $("game").appendChild(renderer.domElement);
    LIGHTING
    ========================================================= */
 
-const hemi=new THREE.HemisphereLight(0xd9ecff,0x53432d,2.0);
+const hemi=new THREE.HemisphereLight(0xd9ecff,0x53432d,1.85);
 scene.add(hemi);
 
-const sun=new THREE.DirectionalLight(0xffedcc,2.5);
+const sun=new THREE.DirectionalLight(0xffedcc,2.2);
 sun.position.set(-70,120,50);
 sun.castShadow=true;
 sun.shadow.mapSize.set(1024,1024);
@@ -1208,7 +1208,7 @@ sun.shadow.camera.far=280;
 sun.shadow.bias=-.0003;
 scene.add(sun);
 
-const fillLight=new THREE.DirectionalLight(0xc1d9ff,.45);
+const fillLight=new THREE.DirectionalLight(0xc1d9ff,.4);
 fillLight.position.set(50,30,-60);
 scene.add(fillLight);
 
@@ -1222,20 +1222,18 @@ function createRoadTexture(){
  canvas.height=512;
  const ctx=canvas.getContext("2d");
 
- // Rich dark asphalt base (explicitly neutral dark charcoal, never blue)
- ctx.fillStyle="#232528";
+ // Deep dark asphalt base (prevents white blowout under directional light)
+ ctx.fillStyle="#1c1e22";
  ctx.fillRect(0,0,512,512);
 
- // Subtle tire-wear tracks along lanes
- ctx.fillStyle="rgba(14,15,17,0.38)";
+ ctx.fillStyle="rgba(10,11,13,0.45)";
  ctx.fillRect(65,0,65,512);
  ctx.fillRect(190,0,65,512);
  ctx.fillRect(320,0,65,512);
  ctx.fillRect(410,0,55,512);
 
- // Fine aggregate mineral grain
  for(let i=0;i<22000;i++){
-  const v=20+Math.floor(Math.random()*36);
+  const v=14+Math.floor(Math.random()*30);
   ctx.fillStyle=`rgba(${v},${v},${v},0.22)`;
   ctx.fillRect(Math.floor(Math.random()*512),Math.floor(Math.random()*512),1.5,1.5);
  }
@@ -1255,17 +1253,24 @@ function createFlyoverDeckTexture(){
  canvas.height=512;
  const ctx=canvas.getContext("2d");
 
- ctx.fillStyle="#2c2f34";
+ // Dark charcoal asphalt deck so flyovers look like real asphalt, never white
+ ctx.fillStyle="#1a1c20";
  ctx.fillRect(0,0,512,512);
 
- // Smooth longitudinal asphalt wear lines (no stepped slabs)
- ctx.fillStyle="rgba(16,17,20,0.35)";
- ctx.fillRect(110,0,70,512);
- ctx.fillRect(332,0,70,512);
+ // Lane wear grooves
+ ctx.fillStyle="rgba(9,10,12,0.5)";
+ ctx.fillRect(105,0,75,512);
+ ctx.fillRect(332,0,75,512);
+
+ // Subtle dashed lane marker in center of flyover
+ ctx.fillStyle="rgba(225,215,180,0.45)";
+ for(let y=24;y<512;y+=128){
+  ctx.fillRect(252,y,8,64);
+ }
 
  for(let i=0;i<18000;i++){
-  const v=26+Math.floor(Math.random()*34);
-  ctx.fillStyle=`rgba(${v},${v},${v},0.2)`;
+  const v=12+Math.floor(Math.random()*28);
+  ctx.fillStyle=`rgba(${v},${v},${v},0.22)`;
   ctx.fillRect(Math.floor(Math.random()*512),Math.floor(Math.random()*512),1.5,1.5);
  }
 
@@ -1273,7 +1278,7 @@ function createFlyoverDeckTexture(){
  tex.colorSpace=THREE.SRGBColorSpace;
  tex.wrapS=THREE.RepeatWrapping;
  tex.wrapT=THREE.RepeatWrapping;
- tex.repeat.set(1,16);
+ tex.repeat.set(1,14);
  tex.needsUpdate=true;
  return tex;
 }
@@ -1298,6 +1303,7 @@ function createBuildingTexture(baseHex,accentHex){
  tex.colorSpace=THREE.SRGBColorSpace;
  tex.wrapS=THREE.RepeatWrapping;
  tex.wrapT=THREE.RepeatWrapping;
+ tex.repeat.set(1,1);
  tex.needsUpdate=true;
  return tex;
 }
@@ -1359,11 +1365,11 @@ function material(color,roughness=.8,metalness=0,map=null){
 }
 
 const M={
- road:material(0x2b2e33,.92,0.02,roadTexture),
- wetRoad:material(0x282c32,.24,.22,roadTexture),
- flyoverDeck:material(0x303338,.86,.05,flyoverDeckTexture),
- flyoverConcrete:material(0x9a968c,.88,0),
- flyoverPillar:material(0x78746a,.9,0),
+ road:material(0x23262b,.92,0.0,roadTexture),
+ wetRoad:material(0x20252c,.25,.18,roadTexture),
+ flyoverDeck:material(0x3a3e45,.92,0.0,flyoverDeckTexture),
+ flyoverConcrete:material(0x7c786f,.9,0.0),
+ flyoverPillar:material(0x646058,.92,0.0),
  sidewalk:material(0x8d8980,.9),
  drain:material(0x16181a,.95),
  grass:material(0x3f5932,1),
@@ -1631,7 +1637,6 @@ function syncHeadlightVisuals(){
  for(let i=0;i<headLamps.length;i++){
   const spot=headLamps[i];
   spot.intensity=spotIntensity;
-  // Ensure target always stays strictly forward (-Z local front of vehicle)
   spot.target.position.set(spot.position.x*1.12,0,-52);
   spot.target.updateMatrixWorld();
 
@@ -1659,7 +1664,6 @@ function setupVehicleLights(){
  headlightCones=[];
  headlightBulbs=[];
 
- // Vehicle local forward is -Z. Two front-only spotlights + forward-only volumetric cones.
  for(const x of [-.77,.77]){
   const spot=new THREE.SpotLight(
    0xfff5dc,0,155,.52,.72,1.15
@@ -1671,8 +1675,6 @@ function setupVehicleLights(){
   player.add(spot.target);
   headLamps.push(spot);
 
-  // ConeGeometry apex is at +Y; translate by -18 along Y then rotateX(-PI/2)
-  // places the apex at z=0 (front bumper) and the wide beam extending toward -Z (forward only).
   const coneGeo=new THREE.ConeGeometry(2.4,36,20,1,true);
   coneGeo.translate(0,-18,0);
   coneGeo.rotateX(-Math.PI/2);
@@ -2025,6 +2027,9 @@ function createSign(loc,parent,worldMeters,chunkCenter){
 
  group.position.set(roadX,0,worldZ-chunkCenter);
  group.rotation.y=roadAngle;
+ if(deckY>0.5){
+  group.rotation.x=getFlyoverSlope(worldMeters);
+ }
  parent.add(group);
 }
 
@@ -2147,12 +2152,10 @@ function createRealisticIntersection(parent,worldMeters,chunkCenter){
 function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
  const group=new THREE.Group();
  const halfW=CONFIG.FLYOVER_WIDTH*0.5;
- const deckThick=0.38;
  const girderDepth=0.55;
  const barrierH=0.88;
  const barrierW=0.38;
 
- // Build continuous top road surface + continuous underside girder + continuous left/right barriers
  const topPositions=[];
  const topUvs=[];
  const topIndices=[];
@@ -2174,9 +2177,6 @@ function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
   const deckY=getFlyoverDeckY(m);
   const localZ=worldZ-chunkCenter;
 
-  // Normal vector perpendicular to road tangent in XZ plane
-  // Tangent along -Z rotated by ang: dx = sin(ang), dz = -cos(ang)
-  // Right normal in XZ: rx = cos(ang), rz = sin(ang)
   const rx=Math.cos(ang);
   const rz=Math.sin(ang);
 
@@ -2185,12 +2185,10 @@ function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
   const rrx=cx+rx*halfW;
   const rrz=localZ+rz*halfW;
 
-  // Top road deck vertices (left, right)
   topPositions.push(lx,deckY,lz, rrx,deckY,rrz);
-  const vCoord=(m-startM)*0.08;
+  const vCoord=(m-startM)*0.06;
   topUvs.push(0,vCoord, 1,vCoord);
 
-  // Underside concrete soffit vertices (left inset, right inset)
   const inHalfW=halfW-0.3;
   const ilx=cx-rx*inHalfW;
   const ilz=localZ-rz*inHalfW;
@@ -2199,7 +2197,6 @@ function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
   const underY=deckY-girderDepth;
   botPositions.push(ilx,underY,ilz, irx,underY,irz);
 
-  // Left concrete parapet wall (outer-bottom, inner-bottom, inner-top, outer-top)
   const lOutX=cx-rx*halfW;
   const lOutZ=localZ-rz*halfW;
   const lInX=cx-rx*(halfW-barrierW);
@@ -2213,7 +2210,6 @@ function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
    lOutX,wTop,lOutZ
   );
 
-  // Right concrete parapet wall
   const rInX=cx+rx*(halfW-barrierW);
   const rInZ=localZ+rz*(halfW-barrierW);
   const rOutX=cx+rx*halfW;
@@ -2227,13 +2223,10 @@ function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
 
   if(i<steps){
    const base=i*2;
-   // Winding so normal points +Y (upward)
    topIndices.push(base,base+2,base+1, base+1,base+2,base+3);
-   // Winding so normal points -Y (downward)
    botIndices.push(base,base+1,base+2, base+1,base+3,base+2);
 
    const lBase=i*4;
-   // Top cap, inner face, outer face of left barrier
    leftWallIdx.push(
     lBase+2,lBase+6,lBase+3, lBase+3,lBase+6,lBase+7,
     lBase+1,lBase+5,lBase+2, lBase+2,lBase+5,lBase+6,
@@ -2257,7 +2250,7 @@ function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
 
  const topMesh=new THREE.Mesh(topGeo,roadMat);
  topMesh.receiveShadow=true;
- topMesh.castShadow=true;
+ topMesh.castShadow=false;
  group.add(topMesh);
 
  const botGeo=new THREE.BufferGeometry();
@@ -2288,7 +2281,6 @@ function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
  rMesh.receiveShadow=true;
  group.add(rMesh);
 
- // Continuous center double-yellow line & gold barrier cap strips along the exact elevation curve
  const centerLinePos=[];
  const centerLineIdx=[];
  const leftGoldPos=[];
@@ -2308,8 +2300,8 @@ function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
   const rz=Math.sin(ang);
 
   centerLinePos.push(
-   cx-rx*0.24,deckY,localZ-rz*0.24,
-   cx+rx*0.24,deckY,localZ+rz*0.24
+   cx-rx*0.18,deckY,localZ-rz*0.18,
+   cx+rx*0.18,deckY,localZ+rz*0.18
   );
 
   const gTop=deckY+barrierH+0.02;
@@ -2351,8 +2343,7 @@ function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
  rGoldGeo.computeVertexNormals();
  group.add(new THREE.Mesh(rGoldGeo,M.gold));
 
- // Vertical support pillars & streetlight poles at exact elevation
- for(let i=2;i<steps;i+=4){
+ for(let i=3;i<steps-2;i+=4){
   const m=THREE.MathUtils.lerp(startM,endM,i/steps);
   const worldZ=-m;
   const cx=getRoadCenterX(worldZ);
@@ -2360,9 +2351,9 @@ function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
   const deckY=getFlyoverDeckY(m);
   const localZ=worldZ-chunkCenter;
 
-  if(deckY>2.2){
+  if(deckY>2.6){
    const pillarH=deckY-0.35;
-   const pillar=addCylinder(group,0.72,pillarH,M.flyoverPillar,cx,pillarH*0.5,localZ);
+   const pillar=addCylinder(group,0.68,pillarH,M.flyoverPillar,cx,pillarH*0.5,localZ);
    pillar.rotation.y=ang;
   }
  }
@@ -2410,7 +2401,6 @@ function createRoadChunk(index){
   sliceGroup.position.set(xMid,0,localZ);
   sliceGroup.rotation.y=angle;
 
-  // Ground asphalt highway & flanking shoulders
   addBox(sliceGroup,CONFIG.ROAD_WIDTH,.24,segLen,roadMat,0,-.12,0);
 
   for(const side of [-1,1]){
@@ -2427,6 +2417,8 @@ function createRoadChunk(index){
 
   const fy1=getFlyoverDeckY(sliceStartM);
   const fy2=getFlyoverDeckY(sliceEndM);
+  const fZone=getFlyoverZone(sliceMidM);
+  const nearRampEntry=fZone&&(sliceMidM>=fZone.startM-16&&sliceMidM<=fZone.startM+16);
   const hasFlyover=fy1>0.001||fy2>0.001;
 
   if(hasFlyover){
@@ -2439,7 +2431,7 @@ function createRoadChunk(index){
     flyoverRunEnd=null;
    }
 
-   if(!isIntersectionAt(sliceMidM)){
+   if(!isIntersectionAt(sliceMidM)&&!nearRampEntry){
     if(area.divider){
      addBox(
       sliceGroup,.68,.38,segLen-.04,
@@ -2463,7 +2455,6 @@ function createRoadChunk(index){
   }
  }
 
- // Flush any active flyover strip at chunk boundary with exact elevation continuity
  if(flyoverRunStart!==null&&flyoverRunEnd!==null){
   group.add(buildContinuousFlyoverStrip(flyoverRunStart,flyoverRunEnd,center,36,M.flyoverDeck));
  }
@@ -2805,11 +2796,13 @@ function updateTraffic(dt){
   car.group.rotation.y=(car.direction===1?0:Math.PI)+carRoadAngle;
   car.group.rotation.x=car.useFlyover?getFlyoverSlope(carMeters)*(car.direction===-1?1:-1):0;
 
-  if(Math.abs(playerY-car.y)<2.2){
+  // Check collision only when on same deck level (prevents false flyover-vs-underpass collisions)
+  const sameLevel=car.useFlyover===onFlyover||Math.abs(playerY-car.y)<1.4;
+  if(sameLevel&&Math.abs(playerY-car.y)<1.45){
    const dx=player.position.x-car.x;
    const dz=player.position.z-car.z;
-   const minX=car.width/2+1.08;
-   const minZ=car.length/2+2.25;
+   const minX=car.width/2+1.05;
+   const minZ=car.length/2+2.2;
 
    if(Math.abs(dx)<minX&&Math.abs(dz)<minZ){
     const overlapX=minX-Math.abs(dx);
@@ -2822,7 +2815,7 @@ function updateTraffic(dt){
     }
 
     const relSpeed=Math.abs(speed-car.speed*3.6*(-car.direction));
-    if(relSpeed>10&&performance.now()-lastCollision>750){
+    if(relSpeed>12&&performance.now()-lastCollision>750){
      handleCollision(relSpeed,car.x,car.z);
     }
    }
@@ -2900,10 +2893,12 @@ function updateParticles(dt){
 function handleCollision(impactSpeed,hitX,hitZ){
  lastCollision=performance.now();
  totalCollisions++;
- missionState.crashes++;
+ const isMajor=impactSpeed>65;
+ if(isMajor||impactSpeed>28){
+  missionState.crashes++;
+ }
 
  const v=vehicles[selectedVehicle];
- const isMajor=impactSpeed>65;
  const dmgGain=(isMajor?12:4.5)/(v.mass||1);
 
  damage=Math.min(100,damage+dmgGain);
@@ -2944,18 +2939,18 @@ function applyEnvironment(autoLights=false){
  if(timeOfDay==="day"){
   if(weather==="overcast"||weather==="heavy_rain"){
    scene.background.set(0x5c6873);
-   hemi.intensity=1.25;
-   sun.intensity=1.1;
+   hemi.intensity=1.2;
+   sun.intensity=1.05;
   }else if(weather==="cloudy"||weather==="rain"){
    scene.background.set(0x768b9e);
-   hemi.intensity=1.55;
-   sun.intensity=1.65;
+   hemi.intensity=1.45;
+   sun.intensity=1.55;
   }else{
    scene.background.set(0x91c8ed);
-   hemi.intensity=2.0;
-   sun.intensity=2.5;
+   hemi.intensity=1.85;
+   sun.intensity=2.2;
   }
-  fillLight.intensity=.45;
+  fillLight.intensity=.4;
   renderer.toneMappingExposure=1.0;
  }else if(timeOfDay==="evening"){
   scene.background.set(weather==="rain"?0x5c4842:0xc9855b);
@@ -2969,7 +2964,7 @@ function applyEnvironment(autoLights=false){
   hemi.intensity=.65;
   sun.intensity=.28;
   fillLight.intensity=.25;
-  renderer.toneMappingExposure=1.05;
+  renderer.toneMappingExposure=1.02;
   if(autoLights)headlights=true;
  }
 
@@ -3476,16 +3471,15 @@ function updatePlayer(dt){
  roadOffset+=velocityX*dt;
 
  const deckY=getFlyoverDeckY(distance);
- const flyHalfW=CONFIG.FLYOVER_WIDTH/2-1.15;
+ const flyHalfW=CONFIG.FLYOVER_WIDTH/2-1.1;
 
- // Continuous ground/ramp elevation tracking without stair-step jumps
  if(!onFlyover){
-  if(deckY>0.02&&deckY<0.45&&Math.abs(roadOffset)<flyHalfW){
+  if(deckY>0.03&&deckY<3.6&&Math.abs(roadOffset)<flyHalfW){
    onFlyover=true;
    showToast("ASCENDING FLYOVER RAMP ▲");
   }
  }else{
-  if(deckY<=0.015){
+  if(deckY<=0.02){
    onFlyover=false;
   }else if(Math.abs(roadOffset)>flyHalfW){
    roadOffset=Math.sign(roadOffset)*flyHalfW;
@@ -3533,7 +3527,6 @@ function updatePlayer(dt){
   vehicleBody.rotation.z,-smoothSteer*.045,1-Math.pow(.03,dt)
  );
 
- // Smooth pitch aligned with ramp slope; dampened suspension ripple so tires stay planted
  const accelPitch=(braking||handbrake)?0.016:(accelerator&&speed>5?-0.01:0);
  const targetPitch=rampSlope+accelPitch;
  suspensionPhase+=Math.abs(ms)*dt*2.0;
@@ -4081,6 +4074,8 @@ function renderMissions(){
    if(m.type==="flyover_distance"&&distance>320){
     distance=0;
     roadOffset=0;
+    playerY=0;
+    onFlyover=false;
     player.position.set(0,0,0);
     for(const group of chunks.values())disposeGroup(group);
     chunks.clear();
@@ -4255,7 +4250,7 @@ window.addEventListener("keydown",e=>{
   $("nitroBtn").classList.add("active");
   showToast("NITRO BOOST ENGAGED!");
  }
- if(key==="escape"){
+ if(key==="escape"&&running){
   paused?resumeGame():pauseGame();
  }
 });
@@ -4377,6 +4372,7 @@ $("hazardBtn").addEventListener("click",()=>{
  $("hazardBtn").classList.toggle("active",hazard);
  if(!hazard){
   for(const lamp of hazardLamps)lamp.visible=false;
+  $("hazardBtn").style.opacity="1";
  }
  showToast(hazard?"HAZARD LIGHTS ON":"HAZARD LIGHTS OFF");
 });
@@ -4478,7 +4474,7 @@ function initializeWorld(){
  const startZ=-distance;
  const startRoadX=getRoadCenterX(startZ);
  const deckY=getFlyoverDeckY(distance);
- onFlyover=deckY>0.04&&Math.abs(roadOffset)<(CONFIG.FLYOVER_WIDTH/2-1.15);
+ onFlyover=deckY>0.03&&Math.abs(roadOffset)<(CONFIG.FLYOVER_WIDTH/2-1.1);
  playerY=onFlyover?deckY:0;
 
  player.position.set(startRoadX+roadOffset,playerY,startZ);
@@ -4526,15 +4522,10 @@ function animate(time){
    if(blinkState!==lastBlinkState){
     lastBlinkState=blinkState;
     playTickSound(blinkState);
-   }
-   $("hazardBtn").style.opacity=blinkState?"1":".45";
-   for(const lamp of hazardLamps){
-    lamp.visible=blinkState;
-   }
-  }else{
-   $("hazardBtn").style.opacity="1";
-   for(const lamp of hazardLamps){
-    lamp.visible=false;
+    $("hazardBtn").style.opacity=blinkState?"1":".45";
+    for(const lamp of hazardLamps){
+     lamp.visible=blinkState;
+    }
    }
   }
 
@@ -4543,9 +4534,9 @@ function animate(time){
    saveAccumulator=0;
    saveGame();
   }
- }
 
- renderer.render(scene,camera);
+  renderer.render(scene,camera);
+ }
 }
 
 /* =========================================================
