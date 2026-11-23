@@ -652,7 +652,7 @@ input[type="range"]{padding:4px 0;accent-color:var(--gold)}
  </div>
 
  <div id="distanceBox">DISTANCE: 0.00 KM • GROUND</div>
- <div id="missionBox">MISSION: EXPLORE CHITTAGONG</div>
+ <div id="missionBox">MISSION: EXPLORE CHITTOGRAM</div>
 
  <div id="statsBox">
   FUEL: <strong id="fuel">100%</strong>
@@ -957,7 +957,6 @@ function getFlyoverZone(meters){
  return null;
 }
 
-/* Smooth quintic (smootherstep) elevation curve with zero C1/C2 kink at ramp ends */
 function smoothRampT(x){
  const t=THREE.MathUtils.clamp(x,0,1);
  return t*t*t*(t*(t*6-15)+10);
@@ -1043,6 +1042,7 @@ let lastLocation=-1;
 let lastTime=0;
 let saveAccumulator=0;
 let lastCollision=0;
+let lastOvertakeRewardTime=0;
 let blinkState=false;
 let lastBlinkState=false;
 let cameraShake=0;
@@ -1134,7 +1134,7 @@ function loadSave(){
 function saveGame(){
  try{
   localStorage.setItem(CONFIG.SAVE_KEY,JSON.stringify({
-   version:11,
+   version:13,
    character:selectedCharacter,
    vehicle:selectedVehicle,
    activeMission:activeMissionIndex,
@@ -1188,6 +1188,12 @@ renderer.setSize(innerWidth,innerHeight);
 
 $("game").appendChild(renderer.domElement);
 
+function renderOnce(){
+ if(renderer&&scene&&camera){
+  renderer.render(scene,camera);
+ }
+}
+
 /* =========================================================
    LIGHTING
    ========================================================= */
@@ -1213,7 +1219,7 @@ fillLight.position.set(50,30,-60);
 scene.add(fillLight);
 
 /* =========================================================
-   PROCEDURAL TEXTURES & MATERIALS (INITIALIZED IMMEDIATELY)
+   PROCEDURAL TEXTURES & SHARED GEOMETRIES / MATERIALS
    ========================================================= */
 
 function createRoadTexture(){
@@ -1222,7 +1228,6 @@ function createRoadTexture(){
  canvas.height=512;
  const ctx=canvas.getContext("2d");
 
- // Deep dark asphalt base (prevents white blowout under directional light)
  ctx.fillStyle="#1c1e22";
  ctx.fillRect(0,0,512,512);
 
@@ -1243,42 +1248,6 @@ function createRoadTexture(){
  tex.wrapS=THREE.RepeatWrapping;
  tex.wrapT=THREE.RepeatWrapping;
  tex.repeat.set(2,2);
- tex.needsUpdate=true;
- return tex;
-}
-
-function createFlyoverDeckTexture(){
- const canvas=document.createElement("canvas");
- canvas.width=512;
- canvas.height=512;
- const ctx=canvas.getContext("2d");
-
- // Dark charcoal asphalt deck so flyovers look like real asphalt, never white
- ctx.fillStyle="#1a1c20";
- ctx.fillRect(0,0,512,512);
-
- // Lane wear grooves
- ctx.fillStyle="rgba(9,10,12,0.5)";
- ctx.fillRect(105,0,75,512);
- ctx.fillRect(332,0,75,512);
-
- // Subtle dashed lane marker in center of flyover
- ctx.fillStyle="rgba(225,215,180,0.45)";
- for(let y=24;y<512;y+=128){
-  ctx.fillRect(252,y,8,64);
- }
-
- for(let i=0;i<18000;i++){
-  const v=12+Math.floor(Math.random()*28);
-  ctx.fillStyle=`rgba(${v},${v},${v},0.22)`;
-  ctx.fillRect(Math.floor(Math.random()*512),Math.floor(Math.random()*512),1.5,1.5);
- }
-
- const tex=new THREE.CanvasTexture(canvas);
- tex.colorSpace=THREE.SRGBColorSpace;
- tex.wrapS=THREE.RepeatWrapping;
- tex.wrapT=THREE.RepeatWrapping;
- tex.repeat.set(1,14);
  tex.needsUpdate=true;
  return tex;
 }
@@ -1351,7 +1320,6 @@ function createLightPoolTexture(){
 }
 
 const roadTexture=createRoadTexture();
-const flyoverDeckTexture=createFlyoverDeckTexture();
 const bTex1=createBuildingTexture("#94897a","#6e6355");
 const bTex2=createBuildingTexture("#a89b85","#7a6f5d");
 const bTex3=createBuildingTexture("#72797c","#4f5558");
@@ -1366,10 +1334,12 @@ function material(color,roughness=.8,metalness=0,map=null){
 
 const M={
  road:material(0x23262b,.92,0.0,roadTexture),
- wetRoad:material(0x20252c,.25,.18,roadTexture),
- flyoverDeck:material(0x3a3e45,.92,0.0,flyoverDeckTexture),
- flyoverConcrete:material(0x7c786f,.9,0.0),
- flyoverPillar:material(0x646058,.92,0.0),
+ wetRoad:material(0x1b2026,.25,.18,roadTexture),
+ // MeshBasicMaterial prevents directional sun from washing out the flyover deck into pale grey
+ flyoverDeck:new THREE.MeshBasicMaterial({color:0x26292e,map:roadTexture}),
+ flyoverWetDeck:new THREE.MeshBasicMaterial({color:0x181c21,map:roadTexture}),
+ flyoverConcrete:material(0x6e6a62,.9,0.0),
+ flyoverPillar:material(0x5a564f,.92,0.0),
  sidewalk:material(0x8d8980,.9),
  drain:material(0x16181a,.95),
  grass:material(0x3f5932,1),
@@ -1402,6 +1372,13 @@ const M={
   blending:THREE.AdditiveBlending,
   depthWrite:false
  }),
+ trafficGlow:new THREE.MeshBasicMaterial({
+  color:0x4a1616,
+  transparent:true,
+  opacity:0.42,
+  blending:THREE.AdditiveBlending,
+  depthWrite:false
+ }),
  green:material(0x17603a),
  windowLight:new THREE.MeshBasicMaterial({color:0xe8c97a}),
  line:new THREE.MeshBasicMaterial({color:0xe9e2cd}),
@@ -1409,11 +1386,16 @@ const M={
 };
 
 const sharedTextures=new Set([
- roadTexture,flyoverDeckTexture,bTex1,bTex2,bTex3,beamTexture,lightPoolTexture
+ roadTexture,bTex1,bTex2,bTex3,beamTexture,lightPoolTexture
 ]);
 
 const boxGeo=new THREE.BoxGeometry(1,1,1);
 const sphereGeo=new THREE.SphereGeometry(1,14,10);
+const cylGeo=new THREE.CylinderGeometry(1,1,1,12);
+const trafficGlowGeo=new THREE.PlaneGeometry(1,1);
+
+const protectedGeos=new Set([boxGeo,sphereGeo,cylGeo,trafficGlowGeo]);
+const protectedMats=new Set(Object.values(M));
 
 function addBox(parent,w,h,d,mat,x,y,z){
  const m=new THREE.Mesh(boxGeo,mat);
@@ -1435,10 +1417,8 @@ function addSphere(parent,rx,ry,rz,mat,x,y,z){
 }
 
 function addCylinder(parent,radius,height,mat,x,y,z){
- const m=new THREE.Mesh(
-  new THREE.CylinderGeometry(radius,radius,height,12),
-  mat
- );
+ const m=new THREE.Mesh(cylGeo,mat);
+ m.scale.set(radius,height,radius);
  m.position.set(x,y,z);
  m.castShadow=true;
  parent.add(m);
@@ -1453,18 +1433,17 @@ function disposeGroup(group){
  }
  group.traverse(o=>{
   if(!o.isMesh)return;
-  if(o.geometry&&o.geometry!==boxGeo&&o.geometry!==sphereGeo){
+  if(o.geometry&&!protectedGeos.has(o.geometry)){
    o.geometry.dispose();
   }
   if(o.material){
-   const sharedMats=Object.values(M);
    if(Array.isArray(o.material)){
     o.material.forEach(m=>{
-     if(sharedMats.includes(m))return;
+     if(protectedMats.has(m))return;
      if(m.map&&!sharedTextures.has(m.map))m.map.dispose();
      m.dispose();
     });
-   }else if(!sharedMats.includes(o.material)){
+   }else if(!protectedMats.has(o.material)){
     if(o.material.map&&!sharedTextures.has(o.material.map)){
      o.material.map.dispose();
     }
@@ -2149,7 +2128,7 @@ function createRealisticIntersection(parent,worldMeters,chunkCenter){
    CONTINUOUS SMOOTH BUFFERGEOMETRY FLYOVER RAMP BUILDER
    ========================================================= */
 
-function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
+function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,deckMat){
  const group=new THREE.Group();
  const halfW=CONFIG.FLYOVER_WIDTH*0.5;
  const girderDepth=0.55;
@@ -2186,8 +2165,8 @@ function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
   const rrz=localZ+rz*halfW;
 
   topPositions.push(lx,deckY,lz, rrx,deckY,rrz);
-  const vCoord=(m-startM)*0.06;
-  topUvs.push(0,vCoord, 1,vCoord);
+  const vCoord=(m-startM)*0.26;
+  topUvs.push(0,vCoord, 2,vCoord);
 
   const inHalfW=halfW-0.3;
   const ilx=cx-rx*inHalfW;
@@ -2248,8 +2227,8 @@ function buildContinuousFlyoverStrip(startM,endM,chunkCenter,steps,roadMat){
  topGeo.setIndex(topIndices);
  topGeo.computeVertexNormals();
 
- const topMesh=new THREE.Mesh(topGeo,roadMat);
- topMesh.receiveShadow=true;
+ const topMesh=new THREE.Mesh(topGeo,deckMat);
+ topMesh.receiveShadow=false;
  topMesh.castShadow=false;
  group.add(topMesh);
 
@@ -2372,6 +2351,7 @@ function createRoadChunk(index){
  const area=getArea(index*CONFIG.CHUNK_LENGTH);
  const isWet=weather==="rain"||weather==="heavy_rain";
  const roadMat=isWet?M.wetRoad:M.road;
+ const flyoverMat=isWet?M.flyoverWetDeck:M.flyoverDeck;
  const isStreetLit=timeOfDay==="night"||timeOfDay==="evening";
 
  const sliceCount=Math.round(CONFIG.CHUNK_LENGTH/CONFIG.SLICE_LENGTH);
@@ -2426,7 +2406,7 @@ function createRoadChunk(index){
    flyoverRunEnd=sliceEndM;
   }else{
    if(flyoverRunStart!==null){
-    group.add(buildContinuousFlyoverStrip(flyoverRunStart,flyoverRunEnd,center,36,M.flyoverDeck));
+    group.add(buildContinuousFlyoverStrip(flyoverRunStart,flyoverRunEnd,center,36,flyoverMat));
     flyoverRunStart=null;
     flyoverRunEnd=null;
    }
@@ -2456,7 +2436,7 @@ function createRoadChunk(index){
  }
 
  if(flyoverRunStart!==null&&flyoverRunEnd!==null){
-  group.add(buildContinuousFlyoverStrip(flyoverRunStart,flyoverRunEnd,center,36,M.flyoverDeck));
+  group.add(buildContinuousFlyoverStrip(flyoverRunStart,flyoverRunEnd,center,36,flyoverMat));
  }
 
  for(const side of [-1,1]){
@@ -2622,16 +2602,8 @@ function createTrafficVehicle(type,laneOffset,z,direction=1,useFlyover=false){
   addBox(group,type==="BIKE"?.2:.32,.22,.09,M.trafficHead,side*w*.34,h*.62,-l/2-.05);
  }
 
- const underGlow=new THREE.Mesh(
-  new THREE.PlaneGeometry(w*1.15,l*1.15),
-  new THREE.MeshBasicMaterial({
-   color:0x4a1616,
-   transparent:true,
-   opacity:0.42,
-   blending:THREE.AdditiveBlending,
-   depthWrite:false
-  })
- );
+ const underGlow=new THREE.Mesh(trafficGlowGeo,M.trafficGlow);
+ underGlow.scale.set(w*1.15,l*1.15,1);
  underGlow.rotation.x=-Math.PI/2;
  underGlow.position.set(0,0.03,0);
  group.add(underGlow);
@@ -2668,6 +2640,7 @@ function createTrafficVehicle(type,laneOffset,z,direction=1,useFlyover=false){
   speed:baseSpeed,
   baseSpeed,width:w,length:l,
   overtakeTimer:Math.random()*8,
+  passedByPlayer:false,
   indicatorLeft,
   indicatorRight
  };
@@ -2774,6 +2747,17 @@ function updateTraffic(dt){
   car.z+=car.speed*dt*car.direction;
   car.laneOffset=THREE.MathUtils.lerp(car.laneOffset,car.targetLaneOffset,Math.min(1,dt*2.2));
 
+  if(!car.passedByPlayer&&car.useFlyover===onFlyover&&player.position.z<car.z-3&&player.position.z>car.z-25){
+   car.passedByPlayer=true;
+   const lateralGap=Math.abs(roadOffset-car.laneOffset);
+   if(speed>90&&lateralGap>1.2&&lateralGap<5.5&&performance.now()-lastOvertakeRewardTime>1800){
+    lastOvertakeRewardTime=performance.now();
+    coins+=50;
+    updateStats();
+    showToast("CLEAN OVERTAKE +50 BDT");
+   }
+  }
+
   if(car.z>player.position.z+110||car.z<player.position.z-1650){
    const lanes=getTrafficLanes(car.direction,car.useFlyover);
    const newLane=lanes[Math.floor(Math.random()*lanes.length)];
@@ -2783,6 +2767,7 @@ function updateTraffic(dt){
     car.laneOffset=newLane;
     car.targetLaneOffset=newLane;
     car.speed=car.baseSpeed;
+    car.passedByPlayer=false;
    }
   }
 
@@ -2796,7 +2781,6 @@ function updateTraffic(dt){
   car.group.rotation.y=(car.direction===1?0:Math.PI)+carRoadAngle;
   car.group.rotation.x=car.useFlyover?getFlyoverSlope(carMeters)*(car.direction===-1?1:-1):0;
 
-  // Check collision only when on same deck level (prevents false flyover-vs-underpass collisions)
   const sameLevel=car.useFlyover===onFlyover||Math.abs(playerY-car.y)<1.4;
   if(sameLevel&&Math.abs(playerY-car.y)<1.45){
    const dx=player.position.x-car.x;
@@ -2874,6 +2858,22 @@ function spawnImpactParticles(x,z,count=18,isSpark=true){
 }
 
 function updateParticles(dt){
+ if(nitroActive&&Math.abs(speed)>15&&particles.length<60){
+  for(const side of [-0.65,0.65]){
+   const mesh=new THREE.Mesh(boxGeo,M.headLampOn);
+   mesh.scale.set(0.11,0.11,0.22);
+   mesh.position.set(player.position.x+side,playerY+0.55,player.position.z+2.45);
+   scene.add(mesh);
+   particles.push({
+    mesh,
+    vx:(Math.random()-.5)*1.2,
+    vy:0.4+Math.random()*0.8,
+    vz:6+Math.random()*4,
+    life:0.18
+   });
+  }
+ }
+
  for(let i=particles.length-1;i>=0;i--){
   const p=particles[i];
   p.life-=dt;
@@ -4144,6 +4144,7 @@ function saveSettings(){
  }
  chunks.clear();
  updateWorld();
+ renderOnce();
 
  saveGame();
  $("settingsScreen").classList.add("hidden");
